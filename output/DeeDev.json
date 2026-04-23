@@ -1,0 +1,26 @@
+{
+  "smart_subcategory": "Operational Disruption",
+  "headline": "DEE Development Engineers reports operational impacts due to West Asia geopolitical disruptions and government mandates",
+  "summary": "Geopolitical conflict in West Asia is causing shipping delays for DEE Development Engineers' export orders, invoking Force Majeure. Additionally, Indian government directives under the Essential Commodities Act have capped industrial natural gas supply at 80% of contracted volumes. The company expects these external factors to have a limited impact on overall performance. Management confirms operations remain stable with no contract cancellations and a healthy order book.",
+  "sentiment": "negative",
+  "key_entities": [
+    "Government of India",
+    "BSE Limited",
+    "National Stock Exchange of India Ltd"
+  ],
+  "smart_subcategory_specific": {
+    "disruption_type": "supply_chain_disruption",
+    "disruption_date": "2026-02-28",
+    "location": "West Asia",
+    "facility_affected": null,
+    "pct_of_total_capacity_affected": null,
+    "casualties": null,
+    "estimated_financial_impact_cr": null,
+    "estimated_production_loss": null,
+    "expected_resolution_date": null,
+    "insurance_cover": null,
+    "insurance_claim_cr": null,
+    "regulatory_notifications_made": true,
+    "force_majeure_invoked": true
+  }
+}

@@ -1,0 +1,1344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BSE Live Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0c0c0e;
+      --bg2:       #0f0f11;
+      --bg3:       #18181b;
+      --border:    #1e1e22;
+      --border2:   #2a2a2e;
+      --text:      #e2e2e2;
+      --muted:     #666;
+      --muted2:    #444;
+      --accent:    #4f46e5;
+      --accent-dim:#4f46e520;
+      --accent-mid:#818cf8;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--text);
+      height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    /* ── Topbar ── */
+    .topbar {
+      height: 48px; flex-shrink: 0;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; padding: 0 20px; gap: 16px;
+      background: var(--bg2);
+    }
+    .topbar-title { font-size: 14px; font-weight: 700; color: #fff; }
+    .topbar-sep   { width: 1px; height: 18px; background: var(--border2); }
+
+    .status-dot-wrap { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--muted2);
+      transition: background 0.3s;
+    }
+    .status-dot.running { background: #4ade80; box-shadow: 0 0 6px #4ade8088; }
+    .status-dot.running.pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.5; } }
+
+    .live-badge {
+      font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 20px;
+      background: #16a34a20; color: #4ade80; border: 1px solid #16a34a40;
+      display: none; animation: fadeIn .3s;
+    }
+    .live-badge.show { display: inline; }
+    @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+
+    .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
+    .poller-btn {
+      padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
+      border: none; transition: all .15s;
+    }
+    .poller-btn.start { background: #16a34a; color: #fff; }
+    .poller-btn.start:hover { background: #15803d; }
+    .poller-btn.stop  { background: #dc2626; color: #fff; }
+    .poller-btn.stop:hover  { background: #b91c1c; }
+
+    .icon-btn {
+      background: transparent; border: 1px solid var(--border2); border-radius: 6px;
+      color: var(--muted); padding: 6px 10px; cursor: pointer; font-size: 12px;
+      transition: all .15s; display: flex; align-items: center; gap: 4px;
+    }
+    .icon-btn:hover { color: var(--text); border-color: #555; }
+
+    .back-link {
+      font-size: 12px; color: var(--accent-mid); text-decoration: none;
+      display: flex; align-items: center; gap: 4px; transition: color .15s;
+    }
+    .back-link:hover { color: #c7d2fe; }
+
+    .last-poll-txt { font-size: 11px; color: var(--muted2); }
+
+    /* ── Filter bar ── */
+    .filter-bar {
+      flex-shrink: 0; padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .filter-bar select, .filter-bar input[type="text"] {
+      background: var(--bg3); border: 1px solid var(--border2); border-radius: 6px;
+      padding: 6px 10px; font-size: 12px; color: var(--text); outline: none;
+      transition: border-color .15s; font-family: inherit;
+    }
+    .filter-bar select:focus, .filter-bar input[type="text"]:focus {
+      border-color: var(--accent);
+    }
+    .filter-bar select { min-width: 140px; }
+    .filter-bar input[type="text"] { min-width: 220px; flex: 1; max-width: 380px; }
+    .filter-bar select option { background: var(--bg3); }
+
+    .clear-btn {
+      padding: 6px 12px; background: transparent; border: 1px solid var(--border2);
+      border-radius: 6px; color: var(--muted); font-size: 12px; cursor: pointer;
+      transition: all .15s;
+    }
+    .clear-btn:hover { color: var(--text); border-color: #555; }
+
+    .filter-count { font-size: 11px; color: var(--muted2); white-space: nowrap; }
+
+    /* ── Main layout ── */
+    .main-wrap {
+      flex: 1; display: flex; overflow: hidden; position: relative;
+    }
+
+    /* ── Table area ── */
+    .table-wrap {
+      flex: 1; overflow-y: auto; transition: margin-right .25s;
+    }
+    .table-wrap.drawer-open { margin-right: 440px; }
+
+    table {
+      width: 100%; border-collapse: collapse; font-size: 12px;
+    }
+    thead th {
+      position: sticky; top: 0; z-index: 10;
+      background: var(--bg2); padding: 10px 14px;
+      text-align: left; font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.7px;
+      color: var(--muted2); border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      cursor: pointer; transition: background .1s;
+    }
+    tbody tr:hover { background: var(--bg2); }
+    tbody tr.selected { background: #1a1a2e; }
+    td { padding: 9px 14px; vertical-align: middle; }
+
+    .td-time { white-space: nowrap; color: var(--muted); font-size: 11px; }
+    .td-company-name { font-weight: 600; color: var(--text); }
+    .td-scrip { font-size: 10px; color: var(--muted2); margin-top: 2px; }
+
+    .chip {
+      display: inline-block; font-size: 10px; font-weight: 600;
+      padding: 2px 7px; border-radius: 20px; white-space: nowrap;
+    }
+    .chip-bse-cat { background: #71717a20; color: #a1a1aa; border: 1px solid #71717a40; }
+    .chip-subcat  { background: var(--bg3); color: var(--muted); border: 1px solid var(--border2); margin-top: 3px; }
+
+    /* Smart subcategory chips by color */
+    .sc-chip {
+      display: inline-block; font-size: 10px; font-weight: 700;
+      padding: 2px 8px; border-radius: 20px; white-space: nowrap;
+    }
+    .sc-financial   { background: #1d4ed820; color: #93c5fd; border: 1px solid #1d4ed840; }
+    .sc-order       { background: #15803d20; color: #86efac; border: 1px solid #15803d40; }
+    .sc-fraud       { background: #dc262620; color: #fca5a5; border: 1px solid #dc262640; }
+    .sc-acquisition { background: #92400e20; color: #fcd34d; border: 1px solid #92400e40; }
+    .sc-merger      { background: #701a7520; color: #e879f9; border: 1px solid #70107540; }
+    .sc-fund        { background: #0e7490_20; color: #67e8f9; border: 1px solid #0e749040; }
+    .sc-insolvency  { background: #7f1d1d20; color: #fda4af; border: 1px solid #7f1d1d40; }
+    .sc-promo       { background: #d9770620; color: #fdba74; border: 1px solid #d9770640; }
+    .sc-mgmt        { background: #1e3a5f20; color: #7dd3fc; border: 1px solid #1e3a5f40; }
+    .sc-routine     { background: #27272a20; color: #71717a;  border: 1px solid #3f3f4640; }
+    .sc-default     { background: var(--accent-dim); color: var(--accent-mid); border: 1px solid #4f46e540; }
+
+    /* Sentiment */
+    .senti { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+    .senti-very_positive { background: #05964520; color: #34d399; border: 1px solid #05964540; font-weight: 700; }
+    .senti-positive      { background: #15803d20; color: #4ade80; border: 1px solid #15803d40; }
+    .senti-neutral       { background: #71717a20; color: #a1a1aa; border: 1px solid #71717a40; }
+    .senti-negative      { background: #dc262620; color: #fca5a5; border: 1px solid #dc262640; }
+    .senti-very_negative { background: #7f1d1d20; color: #f87171; border: 1px solid #7f1d1d40; font-weight: 700; }
+
+    /* Status pills */
+    .status-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+    .s-pending    { background: #27272a; color: #71717a; border: 1px solid #3f3f46; }
+    .s-processing { background: #4f46e520; color: #818cf8; border: 1px solid #4f46e540; }
+    .s-classified { background: #92400e20; color: #fdba74; border: 1px solid #92400e40; }
+    .s-done       { background: #15803d20; color: #4ade80; border: 1px solid #15803d40; }
+    .s-error      { background: #dc262620; color: #fca5a5; border: 1px solid #dc262640; }
+    .spin { animation: spin .8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .td-summary { max-width: 280px; color: #aaa; line-height: 1.4; }
+    .summary-trunc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+
+    .td-actions { white-space: nowrap; }
+    .act-link {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; border-radius: 5px;
+      background: var(--bg3); border: 1px solid var(--border2);
+      color: var(--muted); text-decoration: none; font-size: 13px;
+      transition: all .15s; margin-right: 3px; cursor: pointer;
+    }
+    .act-link:hover { color: var(--text); border-color: #555; background: #222228; }
+
+    .empty-state-row td {
+      text-align: center; padding: 60px 20px; color: var(--muted2); font-size: 13px;
+    }
+
+    /* ── Right drawer ── */
+    .drawer {
+      position: absolute; top: 0; right: 0; bottom: 0;
+      width: 440px; background: var(--bg2);
+      border-left: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      transform: translateX(100%);
+      transition: transform .25s cubic-bezier(.4,0,.2,1);
+      z-index: 100; overflow: hidden;
+    }
+    .drawer.open { transform: translateX(0); }
+
+    .drawer-header {
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: flex-start; gap: 10px; flex-shrink: 0;
+    }
+    .drawer-close {
+      margin-left: auto; background: transparent; border: none;
+      color: var(--muted); cursor: pointer; font-size: 16px; padding: 2px 6px;
+      border-radius: 4px; transition: color .15s; flex-shrink: 0;
+    }
+    .drawer-close:hover { color: var(--text); }
+
+    .drawer-body { flex: 1; overflow-y: auto; padding: 14px 16px; }
+
+    .drawer-company { font-size: 15px; font-weight: 700; color: #fff; line-height: 1.3; }
+    .drawer-scrip   { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .drawer-time    { font-size: 11px; color: var(--muted2); margin-top: 3px; }
+
+    .drawer-section { margin-top: 14px; }
+    .drawer-section-title {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.7px; color: var(--muted2); margin-bottom: 8px;
+    }
+    .drawer-headline { font-size: 13px; color: var(--text); line-height: 1.5; }
+    .drawer-summary  { font-size: 12px; color: #aaa; line-height: 1.6; }
+
+    .drawer-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+    .kv-list { display: flex; flex-direction: column; gap: 6px; }
+    .kv-row  { display: flex; gap: 8px; font-size: 12px; }
+    .kv-key  { color: var(--muted); min-width: 130px; flex-shrink: 0; }
+    .kv-val  { color: var(--text); }
+
+    .rationale-box {
+      background: var(--bg3); border: 1px solid var(--border2); border-radius: 6px;
+      padding: 8px 10px; font-size: 11px; color: #aaa; line-height: 1.5; margin-top: 6px;
+    }
+
+    /* Financial mini table */
+    .mini-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
+    .mini-table th {
+      background: var(--bg3); padding: 5px 8px; text-align: right;
+      font-weight: 700; color: var(--muted2); border-bottom: 1px solid var(--border);
+    }
+    .mini-table th:first-child { text-align: left; }
+    .mini-table td { padding: 5px 8px; text-align: right; border-bottom: 1px solid var(--border); }
+    .mini-table td:first-child { text-align: left; color: var(--muted); }
+
+    .drawer-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .drawer-act-btn {
+      padding: 7px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
+      cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 5px;
+      transition: all .15s; border: none;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-secondary { background: transparent; border: 1px solid var(--border2); color: var(--muted); }
+    .btn-secondary:hover { color: var(--text); border-color: #555; }
+
+    .error-box {
+      background: #7f1d1d20; border: 1px solid #7f1d1d40; border-radius: 6px;
+      padding: 8px 10px; font-size: 11px; color: #fca5a5; margin-top: 6px;
+    }
+
+    /* ── Config modal ── */
+    .modal-backdrop {
+      display: none; position: fixed; inset: 0; background: #000a;
+      z-index: 200; align-items: center; justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 12px; width: 360px; overflow: hidden;
+      box-shadow: 0 20px 60px #000a;
+    }
+    .modal-header {
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .modal-title { font-size: 13px; font-weight: 700; color: #fff; }
+    .modal-close {
+      background: transparent; border: none; color: var(--muted);
+      cursor: pointer; font-size: 16px; padding: 2px 6px;
+    }
+    .modal-close:hover { color: var(--text); }
+    .modal-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .modal-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .modal-body input, .modal-body select {
+      width: 100%; background: var(--bg3); border: 1px solid var(--border2); border-radius: 6px;
+      padding: 7px 10px; font-size: 12px; color: var(--text); outline: none;
+      transition: border-color .15s; font-family: inherit;
+    }
+    .modal-body input:focus, .modal-body select:focus { border-color: var(--accent); }
+    .modal-footer {
+      padding: 12px 16px; border-top: 1px solid var(--border);
+      display: flex; justify-content: flex-end; gap: 8px;
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+
+    .tag-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  </style>
+</head>
+<body>
+
+<!-- Topbar -->
+<div class="topbar">
+  <div class="topbar-title">BSE Live Dashboard</div>
+  <div class="topbar-sep"></div>
+  <div class="status-dot-wrap">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusTxt">Stopped</span>
+  </div>
+  <div class="live-badge" id="liveBadge">LIVE</div>
+  <span class="last-poll-txt" id="lastPollTxt"></span>
+
+  <div class="topbar-right">
+    <button class="poller-btn start" id="pollerBtn" onclick="togglePoller()">Start Poller</button>
+    <button class="icon-btn" onclick="clearData()" title="Clear all data" id="clearBtn">&#128465; Clear</button>
+    <button class="icon-btn" onclick="openConfig()" title="Configure">&#9881; Config</button>
+    <a href="/" class="back-link">&#8592; Extractor</a>
+  </div>
+</div>
+
+<!-- Filter bar -->
+<div class="filter-bar">
+  <select id="filterSmartCat" onchange="applyFilters()">
+    <option value="">All Categories</option>
+  </select>
+  <select id="filterSentiment" onchange="applyFilters()">
+    <option value="">All Sentiments</option>
+    <option value="very_positive">Very Positive</option>
+    <option value="positive">Positive</option>
+    <option value="neutral">Neutral</option>
+    <option value="negative">Negative</option>
+    <option value="very_negative">Very Negative</option>
+  </select>
+  <select id="filterStatus" onchange="applyFilters()">
+    <option value="">All Statuses</option>
+    <option value="pending">Pending</option>
+    <option value="queued">Queued</option>
+    <option value="processing">Processing</option>
+    <option value="classified_no_extractor">Classified</option>
+    <option value="done">Done</option>
+    <option value="error">Error</option>
+  </select>
+  <input type="text" id="filterSearch" placeholder="Search company or headline..." oninput="applyFilters()" />
+  <button class="clear-btn" onclick="clearFilters()">Clear</button>
+  <span class="filter-count" id="filterCount"></span>
+</div>
+
+<!-- Main content -->
+<div class="main-wrap">
+  <div class="table-wrap" id="tableWrap">
+    <table id="mainTable">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Company</th>
+          <th>BSE Category</th>
+          <th>Smart Category</th>
+          <th>Sentiment</th>
+          <th>Summary</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        <tr class="empty-state-row"><td colspan="8">No announcements yet. Start the poller to begin.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Right drawer -->
+  <div class="drawer" id="drawer">
+    <div class="drawer-header">
+      <div>
+        <div class="drawer-company" id="drawerCompany"></div>
+        <div class="drawer-scrip" id="drawerScrip"></div>
+        <div class="drawer-time" id="drawerTime"></div>
+      </div>
+      <button class="drawer-close" onclick="closeDrawer()">&#10005;</button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </div>
+</div>
+
+<!-- Config modal -->
+<div class="modal-backdrop" id="configModal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <span class="modal-title">Poller Configuration</span>
+      <button class="modal-close" onclick="closeConfig()">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div>
+        <div class="modal-label">Gemini API Key</div>
+        <input type="password" id="cfgApiKey" placeholder="AIza..." />
+      </div>
+      <div style="display:flex;gap:10px">
+        <div style="flex:1">
+          <div class="modal-label">Model (Step 1)</div>
+          <select id="cfgModelStep1">
+            <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+            <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+            <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview</option>
+            <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+          </select>
+        </div>
+        <div style="flex:1">
+          <div class="modal-label">Model (Step 2)</div>
+          <select id="cfgModelStep2">
+            <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+            <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+            <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview</option>
+            <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <div style="flex:1">
+          <div class="modal-label">Max Tokens (Step 1)</div>
+          <select id="cfgMaxTokensStep1">
+            <option value="4096">4,096</option>
+            <option value="8192">8,192</option>
+            <option value="16384">16,384</option>
+            <option value="32768">32,768</option>
+            <option value="65536">65,536</option>
+          </select>
+        </div>
+        <div style="flex:1">
+          <div class="modal-label">Max Tokens (Step 2)</div>
+          <select id="cfgMaxTokensStep2">
+            <option value="8192">8,192</option>
+            <option value="16384">16,384</option>
+            <option value="32768">32,768</option>
+            <option value="65536">65,536</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <div style="flex:1">
+          <div class="modal-label">Thinking (Step 1)</div>
+          <select id="cfgThinkingStep1">
+            <option value="off">Off</option>
+            <option value="MINIMAL">Minimal</option>
+            <option value="LOW">Low</option>
+            <option value="MEDIUM">Medium</option>
+            <option value="HIGH">High</option>
+          </select>
+        </div>
+        <div style="flex:1">
+          <div class="modal-label">Thinking (Step 2)</div>
+          <select id="cfgThinkingStep2">
+            <option value="off">Off</option>
+            <option value="MINIMAL">Minimal</option>
+            <option value="LOW">Low</option>
+            <option value="MEDIUM">Medium</option>
+            <option value="HIGH">High</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <div class="modal-label">Temperature</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="range" id="cfgTemp" min="0" max="2" step="0.1" value="1" style="flex:1" oninput="document.getElementById('cfgTempVal').textContent=this.value" />
+          <span id="cfgTempVal" style="font-size:12px;color:#aaa;min-width:24px;text-align:right">1</span>
+        </div>
+      </div>
+      <div>
+        <div class="modal-label">Response MIME Type</div>
+        <select id="cfgMime">
+          <option value="application/json">application/json (default)</option>
+          <option value="text/plain">text/plain</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:10px">
+        <div style="flex:1">
+          <div class="modal-label">Poll Interval</div>
+          <select id="cfgInterval">
+            <option value="30000">30 seconds</option>
+            <option value="60000">60 seconds</option>
+            <option value="90000">90 seconds (default)</option>
+            <option value="120000">2 minutes</option>
+            <option value="300000">5 minutes</option>
+          </select>
+        </div>
+        <div style="flex:1">
+          <div class="modal-label">Parallel Jobs</div>
+          <select id="cfgConcurrency">
+            <option value="1">1</option>
+            <option value="2">2 (default)</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="drawer-act-btn btn-secondary" onclick="closeConfig()">Cancel</button>
+      <button class="drawer-act-btn btn-primary" onclick="saveConfig()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────
+const records = new Map(); // id → record
+const STEP2_MAP = {
+  'Financial Updates': 'step2_financial_updates',
+  'Concall / Presentation': 'step2_concall_presentation',
+  'Dividend': 'step2_dividend',
+  'Buyback': 'step2_buyback',
+  'Bonus / Stock Split': 'step2_bonus_stock_split',
+  'Acquisition': 'step2_acquisition',
+  'Merger / Demerger': 'step2_merger_demerger',
+  'Joint Venture / Strategic Partnership': 'step2_joint_venture',
+  'Order Win': 'step2_order_win',
+  'Capacity Expansion / Capex': 'step2_capacity_expansion',
+  'Product Launch': 'step2_product_launch',
+  'Fund Raising': 'step2_fund_raising',
+  'Stake Sale / Disinvestment': 'step2_stake_sale',
+  'Credit Rating Change': 'step2_credit_rating_change',
+  'Regulatory Action / Penalty': 'step2_regulatory_action',
+  'Fraud / Default': 'step2_fraud_default',
+  'Insolvency / CIRP': 'step2_insolvency_cirp',
+  'Open Offer / Takeover': 'step2_open_offer',
+  'Promoter Buy / Sell': 'step2_promoter_buy_sell',
+  'Change in Key Management': 'step2_change_in_key_management',
+  'Operational Disruption': 'step2_operational_disruption',
+  'Others': 'step2_others',
+  'Routine / Administrative': 'step2_routine_administrative',
+  'Regulatory Approval / Licensing': 'step2_regulatory_approval',
+};
+let selectedId    = null;
+let pollerRunning = false;
+let evtSource     = null;
+let livePulseTimer = null;
+
+// Filters
+let fSmartCat  = '';
+let fSentiment = '';
+let fStatus    = '';
+let fSearch    = '';
+
+// ── Config ───────────────────────────────────────────────────────────
+function loadConfig() {
+  try { return JSON.parse(localStorage.getItem('bse_dashboard_cfg') || '{}'); } catch { return {}; }
+}
+function saveConfig() {
+  const cfg = {
+    apiKey:          document.getElementById('cfgApiKey').value.trim(),
+    modelStep1:      document.getElementById('cfgModelStep1').value,
+    modelStep2:      document.getElementById('cfgModelStep2').value,
+    maxTokensStep1:  parseInt(document.getElementById('cfgMaxTokensStep1').value, 10),
+    maxTokensStep2:  parseInt(document.getElementById('cfgMaxTokensStep2').value, 10),
+    thinkingStep1:   document.getElementById('cfgThinkingStep1').value,
+    thinkingStep2:   document.getElementById('cfgThinkingStep2').value,
+    temperature:     parseFloat(document.getElementById('cfgTemp').value),
+    mime:            document.getElementById('cfgMime').value,
+    intervalMs:      parseInt(document.getElementById('cfgInterval').value, 10),
+    concurrency:     parseInt(document.getElementById('cfgConcurrency').value, 10),
+  };
+  localStorage.setItem('bse_dashboard_cfg', JSON.stringify(cfg));
+  closeConfig();
+}
+function openConfig() {
+  const cfg = loadConfig();
+  document.getElementById('cfgApiKey').value          = cfg.apiKey || '';
+  document.getElementById('cfgModelStep1').value      = cfg.modelStep1 || 'gemini-3.1-flash-lite-preview';
+  document.getElementById('cfgModelStep2').value      = cfg.modelStep2 || 'gemini-3.1-flash-lite-preview';
+  document.getElementById('cfgMaxTokensStep1').value  = String(cfg.maxTokensStep1 || 8192);
+  document.getElementById('cfgMaxTokensStep2').value  = String(cfg.maxTokensStep2 || 65536);
+  document.getElementById('cfgThinkingStep1').value   = cfg.thinkingStep1 || 'MINIMAL';
+  document.getElementById('cfgThinkingStep2').value   = cfg.thinkingStep2 || 'MINIMAL';
+  document.getElementById('cfgTemp').value            = cfg.temperature != null ? cfg.temperature : 1;
+  document.getElementById('cfgTempVal').textContent   = cfg.temperature != null ? cfg.temperature : 1;
+  document.getElementById('cfgMime').value            = cfg.mime || 'application/json';
+  document.getElementById('cfgInterval').value        = String(cfg.intervalMs || 90000);
+  document.getElementById('cfgConcurrency').value     = String(cfg.concurrency || 2);
+  document.getElementById('configModal').classList.add('open');
+}
+function closeConfig() { document.getElementById('configModal').classList.remove('open'); }
+
+// ── Clear data ──────────────────────────────────────────────────────
+async function clearData() {
+  if (pollerRunning) {
+    alert('Stop the poller first before clearing data.');
+    return;
+  }
+  if (!confirm('Clear all announcements and start fresh?')) return;
+  const res = await fetch('/api/poller/clear', { method: 'POST' });
+  const data = await res.json();
+  if (data.ok) {
+    records.clear();
+    document.getElementById('tableBody').innerHTML = '';
+    closeDrawer();
+    updateFilterCount();
+    rebuildSmartCatDropdown();
+  }
+}
+
+// ── Poller control ───────────────────────────────────────────────────
+async function togglePoller() {
+  if (pollerRunning) {
+    await fetch('/api/poller/stop', { method: 'POST' });
+  } else {
+    const cfg = loadConfig();
+    await fetch('/api/poller/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    });
+  }
+  await refreshStatus();
+}
+
+async function refreshStatus() {
+  try {
+    const res  = await fetch('/api/poller/status');
+    const data = await res.json();
+    pollerRunning = data.running;
+    updatePollerUI(data);
+  } catch {}
+}
+
+function updatePollerUI(data) {
+  const dot = document.getElementById('statusDot');
+  const txt = document.getElementById('statusTxt');
+  const btn = document.getElementById('pollerBtn');
+  const lp  = document.getElementById('lastPollTxt');
+
+  if (data.running) {
+    dot.className = 'status-dot running pulse';
+    txt.textContent = 'Running';
+    btn.className = 'poller-btn stop';
+    btn.textContent = 'Stop Poller';
+  } else {
+    dot.className = 'status-dot';
+    txt.textContent = 'Stopped';
+    btn.className = 'poller-btn start';
+    btn.textContent = 'Start Poller';
+  }
+  if (data.lastPoll) {
+    lp.textContent = 'Last poll: ' + fmtRelTime(data.lastPoll);
+  }
+}
+
+// ── SSE connection ────────────────────────────────────────────────────
+function connectSSE() {
+  if (evtSource) { evtSource.close(); evtSource = null; }
+  evtSource = new EventSource('/dashboard-stream');
+
+  evtSource.addEventListener('update', e => {
+    try {
+      const rec = JSON.parse(e.data);
+      if (rec.status === 'done' || rec.status === 'error') {
+        console.log(`[SSE] ${rec.company?.slice(0,20)} → ${rec.status} (sentiment: ${typeof rec.sentiment})`);
+      }
+      upsertRecord(rec);
+    } catch (err) {
+      console.error('[dashboard] SSE update error:', err, e.data?.slice?.(0, 200));
+    }
+    flashLive();
+  });
+
+  evtSource.addEventListener('connected', e => {
+    const d = JSON.parse(e.data);
+    console.log('[dashboard] SSE connected, got', d.count, 'records');
+  });
+
+  evtSource.onerror = () => {
+    console.warn('[dashboard] SSE disconnected, reconnecting in 5s...');
+    setTimeout(connectSSE, 5000);
+  };
+}
+
+function flashLive() {
+  const badge = document.getElementById('liveBadge');
+  badge.classList.add('show');
+  clearTimeout(livePulseTimer);
+  livePulseTimer = setTimeout(() => badge.classList.remove('show'), 3000);
+}
+
+// ── Record management ─────────────────────────────────────────────────
+function upsertRecord(rec) {
+  records.set(rec.id, rec);
+  rebuildSmartCatDropdown();
+
+  let rowHtml;
+  try { rowHtml = buildRowHtml(rec); }
+  catch (err) { console.error('[dashboard] buildRowHtml failed:', err, rec.id, rec.status); return; }
+
+  const existingRow = document.getElementById('row-' + rec.id);
+  if (existingRow) {
+    existingRow.outerHTML = rowHtml;
+    const newRow = document.getElementById('row-' + rec.id);
+    if (newRow) {
+      newRow.addEventListener('click', () => openDrawer(rec.id));
+      if (rec.id === selectedId) newRow.classList.add('selected');
+    }
+  } else {
+    // Prepend new row
+    const tbody = document.getElementById('tableBody');
+    const emptyRow = tbody.querySelector('.empty-state-row');
+    if (emptyRow) emptyRow.remove();
+    const tr = document.createElement('tr');
+    tr.id = 'row-' + rec.id;
+    tr.innerHTML = buildRowHtml(rec, true);
+    tr.addEventListener('click', () => openDrawer(rec.id));
+    tbody.prepend(tr);
+  }
+
+  updateFilterCount();
+
+  // If this record is selected in drawer, fetch full details and refresh
+  if (rec.id === selectedId) {
+    fetch(`/api/announcements/${rec.id}`).then(r => r.ok ? r.json() : null).then(full => {
+      if (full) { records.set(rec.id, full); renderDrawer(full); }
+      else renderDrawer(rec);
+    }).catch(() => renderDrawer(rec));
+  }
+}
+
+// ── Filters ───────────────────────────────────────────────────────────
+function applyFilters() {
+  fSmartCat  = document.getElementById('filterSmartCat').value;
+  fSentiment = document.getElementById('filterSentiment').value;
+  fStatus    = document.getElementById('filterStatus').value;
+  fSearch    = document.getElementById('filterSearch').value.trim().toLowerCase();
+
+  const rows = document.querySelectorAll('#tableBody tr[id^="row-"]');
+  rows.forEach(row => {
+    const id  = row.id.replace('row-', '');
+    const rec = records.get(id);
+    if (!rec) { row.style.display = ''; return; }
+    row.style.display = matchesFilter(rec) ? '' : 'none';
+  });
+  updateFilterCount();
+}
+
+function matchesFilter(rec) {
+  if (fSmartCat  && rec.smart_subcategory !== fSmartCat) return false;
+  if (fSentiment) {
+    const sl = (typeof rec.sentiment === 'object' ? (rec.sentiment?.label || '') : String(rec.sentiment || '')).toLowerCase();
+    if (sl !== fSentiment.toLowerCase()) return false;
+  }
+  if (fStatus    && rec.status !== fStatus) return false;
+  if (fSearch) {
+    const hay = ((rec.company || '') + ' ' + (rec.headline || '') + ' ' + (rec.extracted_headline || '')).toLowerCase();
+    if (!hay.includes(fSearch)) return false;
+  }
+  return true;
+}
+
+function clearFilters() {
+  document.getElementById('filterSmartCat').value  = '';
+  document.getElementById('filterSentiment').value = '';
+  document.getElementById('filterStatus').value    = '';
+  document.getElementById('filterSearch').value    = '';
+  fSmartCat = fSentiment = fStatus = fSearch = '';
+  applyFilters();
+}
+
+function updateFilterCount() {
+  const visible = document.querySelectorAll('#tableBody tr[id^="row-"]:not([style*="display: none"])').length;
+  const total   = records.size;
+  const el      = document.getElementById('filterCount');
+  el.textContent = visible === total ? `${total} announcements` : `${visible} of ${total}`;
+}
+
+function rebuildSmartCatDropdown() {
+  const cats = new Set();
+  for (const rec of records.values()) {
+    if (rec.smart_subcategory) cats.add(rec.smart_subcategory);
+  }
+  const sel = document.getElementById('filterSmartCat');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All Categories</option>';
+  [...cats].sort().forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    if (c === cur) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+// ── Row HTML ──────────────────────────────────────────────────────────
+function buildRowHtml(rec, asInnerHtml) {
+  const displaySummary = rec.extracted_summary || '';
+  const truncated = displaySummary.length > 80
+    ? displaySummary.slice(0, 80) + '…'
+    : displaySummary;
+
+  const visStyle = matchesFilter(rec) ? '' : 'style="display:none"';
+
+  const html = `
+    <td class="td-time">
+      <span title="${escHtml(fmtFull(rec.bse_time))}">${fmtTime(rec.bse_time)}</span>
+      <div style="font-size:10px;color:#444;margin-top:1px">${fmtDate(rec.bse_time)}</div>
+    </td>
+    <td>
+      <div class="td-company-name">${escHtml(cleanCompanyName(rec.company))}</div>
+      <div class="td-scrip">${rec.scrip_cd || ''}</div>
+    </td>
+    <td>
+      <div><span class="chip chip-bse-cat">${escHtml(rec.bse_category || '')}</span></div>
+      <div style="margin-top:3px"><span class="chip chip-subcat">${escHtml(rec.bse_subcategory || '')}</span></div>
+    </td>
+    <td>${rec.smart_subcategory ? `<span class="sc-chip ${scClass(rec.smart_subcategory)}">${escHtml(rec.smart_subcategory)}</span>` : '<span style="color:#444;font-size:11px">—</span>'}</td>
+    <td>${sentimentBadge(rec.sentiment)}</td>
+    <td class="td-summary">
+      <div class="summary-trunc" title="${escHtml(displaySummary)}">${escHtml(truncated) || '<span style="color:#333">—</span>'}</div>
+    </td>
+    <td>${statusPill(rec.status)}${rec.substatus ? `<div style="font-size:10px;color:#888;margin-top:2px;max-width:140px;line-height:1.3">${escHtml(rec.substatus)}</div>` : ''}</td>
+    <td class="td-actions">
+      ${rec.pdf_url ? `<a class="act-link" href="${escHtml(rec.pdf_url)}" target="_blank" title="View PDF" onclick="event.stopPropagation()">&#128196;</a>` : ''}
+      ${rec.bse_url ? `<a class="act-link" href="${escHtml(rec.bse_url)}" target="_blank" title="BSE page" onclick="event.stopPropagation()">&#127759;</a>` : ''}
+      <span class="act-link" title="Open in Extractor" onclick="event.stopPropagation();openInExtractor('${escHtml(rec.id)}')">&#128280;</span>
+    </td>
+  `;
+
+  if (asInnerHtml) return html;
+  return `<tr id="row-${rec.id}" ${visStyle}>${html}</tr>`;
+}
+
+// ── Drawer ────────────────────────────────────────────────────────────
+async function openDrawer(id) {
+  selectedId = id;
+  document.querySelectorAll('#tableBody tr.selected').forEach(r => r.classList.remove('selected'));
+  const row = document.getElementById('row-' + id);
+  if (row) row.classList.add('selected');
+
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('tableWrap').classList.add('drawer-open');
+
+  // Fetch full record (SSE sends lightweight version without extracted/log)
+  try {
+    const resp = await fetch(`/api/announcements/${id}`);
+    if (resp.ok) {
+      const full = await resp.json();
+      records.set(id, full);
+      renderDrawer(full);
+      return;
+    }
+  } catch {}
+  const rec = records.get(id);
+  if (rec) renderDrawer(rec);
+}
+
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('tableWrap').classList.remove('drawer-open');
+  document.querySelectorAll('#tableBody tr.selected').forEach(r => r.classList.remove('selected'));
+  selectedId = null;
+}
+
+function renderDrawer(rec) {
+  document.getElementById('drawerCompany').textContent = cleanCompanyName(rec.company) || '—';
+  document.getElementById('drawerScrip').textContent   = rec.scrip_cd ? `Scrip: ${rec.scrip_cd}` : '';
+  document.getElementById('drawerTime').textContent    = fmtFull(rec.bse_time);
+
+  let html = '';
+
+  // Status + smart category
+  html += `<div class="drawer-section">
+    <div class="drawer-meta">
+      ${statusPill(rec.status)}
+      ${rec.smart_subcategory ? `<span class="sc-chip ${scClass(rec.smart_subcategory)}">${escHtml(rec.smart_subcategory)}</span>` : ''}
+      ${sentimentBadge(rec.sentiment)}
+    </div>
+    ${rec.substatus ? `<div style="font-size:12px;color:#f0c674;margin-top:6px;line-height:1.4">⏳ ${escHtml(rec.substatus)}</div>` : ''}
+  </div>`;
+
+  // Headline
+  const headline = rec.extracted_headline || rec.headline || '';
+  if (headline) {
+    html += `<div class="drawer-section">
+      <div class="drawer-section-title">Headline</div>
+      <div class="drawer-headline">${escHtml(headline)}</div>
+    </div>`;
+  }
+
+  // Summary
+  if (rec.extracted_summary) {
+    html += `<div class="drawer-section">
+      <div class="drawer-section-title">Summary</div>
+      <div class="drawer-summary">${escHtml(rec.extracted_summary)}</div>
+    </div>`;
+  }
+
+  // Route & classifier info
+  {
+    const promptSlug = rec.smart_subcategory ? STEP2_MAP[rec.smart_subcategory] : null;
+    html += `<div class="drawer-section">
+      <div class="drawer-section-title">Routing</div>
+      <div class="kv-list">
+        <div class="kv-row"><span class="kv-key">Route</span><span class="kv-val">${rec.route === 'llm' ? 'LLM (Step 1 classified)' : 'Definite (from BSE category)'}</span></div>
+        ${promptSlug ? `<div class="kv-row"><span class="kv-key">Step 2 Prompt</span><span class="kv-val" style="color:#818cf8">${escHtml(promptSlug + '.md')}</span></div>` : `<div class="kv-row"><span class="kv-key">Step 2 Prompt</span><span class="kv-val" style="color:#666">Quick summary (no dedicated prompt)</span></div>`}
+      </div>
+    </div>`;
+  }
+  if (rec.route === 'llm' && rec._classifier_rationale) {
+    html += `<div class="drawer-section">
+      <div class="drawer-section-title">Classifier Result</div>
+      <div class="kv-list">
+        <div class="kv-row"><span class="kv-key">Confidence</span><span class="kv-val">${rec._classifier_confidence != null ? rec._classifier_confidence + '%' : '—'}</span></div>
+      </div>
+      <div class="rationale-box">${escHtml(rec._classifier_rationale)}</div>
+    </div>`;
+  }
+
+  // Error box
+  if (rec.error) {
+    html += `<div class="drawer-section">
+      <div class="error-box">${escHtml(rec.error)}</div>
+    </div>`;
+  }
+
+  // Extracted data
+  if (rec.extracted) {
+    if (rec.smart_subcategory === 'Financial Updates') {
+      html += renderFinancialMiniTable(rec.extracted);
+    } else {
+      html += renderKeyValueExtraction(rec.extracted);
+    }
+    // Raw JSON expander
+    html += `<div class="drawer-section">
+      <details>
+        <summary style="cursor:pointer;font-size:11px;color:#666;user-select:none">View Raw JSON</summary>
+        <pre style="background:#111;border:1px solid #222;border-radius:6px;padding:10px;font-size:10px;color:#aaa;max-height:400px;overflow:auto;margin-top:6px;white-space:pre-wrap;word-break:break-word">${escHtml(JSON.stringify(rec.extracted, null, 2))}</pre>
+      </details>
+    </div>`;
+  }
+
+  // Process log — like the main extractor's step-by-step view
+  if (rec.log && rec.log.length > 0) {
+    const startT = rec.log[0]?.t || 0;
+    html += `<div class="drawer-section">
+      <div class="drawer-section-title">Process Log</div>
+      <div class="process-log">`;
+    for (let i = 0; i < rec.log.length; i++) {
+      const entry = rec.log[i];
+      const elapsed = startT ? ((entry.t - startT) / 1000).toFixed(1) : '';
+      const msg = entry.msg || '';
+      const isError = msg.includes('failed') || msg.includes('Failed') || msg.includes('error') || msg.includes('Timed out');
+      const isRetry = msg.includes('Retry') || msg.includes('retry');
+      const isSuccess = msg.includes('succeeded') || msg.includes('done') || msg.includes('Done') || msg.includes('downloaded');
+      const isActive = (i === rec.log.length - 1 && rec.status === 'processing');
+      let dotColor = '#4ade80';
+      if (isError) dotColor = '#f87171';
+      else if (isRetry) dotColor = '#fbbf24';
+      else if (isActive) dotColor = '#818cf8';
+      const bgClass = isActive ? 'background:rgba(79,70,229,0.15);border-radius:4px;margin:0 -6px;padding:2px 6px;' : '';
+      html += `<div style="display:flex;align-items:flex-start;gap:8px;padding:3px 0;font-size:11px;line-height:1.4;${bgClass}">
+        <span style="color:${dotColor};flex-shrink:0;margin-top:2px">●</span>
+        <span style="color:${isError ? '#fca5a5' : isRetry ? '#fde68a' : '#ccc'};flex:1">${escHtml(msg)}</span>
+        <span style="color:#555;flex-shrink:0;min-width:40px;text-align:right">${elapsed}s</span>
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+
+  // Step summary metrics
+  if (rec.steps && Object.keys(rec.steps).length > 0) {
+    const stepOrder = ['download', 'step1', 'step2', 'quick_summary'];
+    const stepLabels = { download: 'Download', step1: 'Step 1', step2: 'Step 2', quick_summary: 'Summary' };
+    let totalTokensIn = 0, totalTokensOut = 0;
+    const cells = [];
+    for (const key of stepOrder) {
+      const s = rec.steps[key];
+      if (!s || s.skipped) continue;
+      if (s.tokens) { totalTokensIn += s.tokens.input; totalTokensOut += s.tokens.output; }
+      const time = s.ms != null ? `${(s.ms / 1000).toFixed(1)}s` : '—';
+      const tok = s.tokens ? `${s.tokens.total.toLocaleString()} tok` : '';
+      const model = s.model || '';
+      cells.push({ label: stepLabels[key], time, tok, model, error: !!s.error });
+    }
+    if (cells.length > 0) {
+      html += `<div class="drawer-section">
+        <div class="drawer-section-title">Step Metrics</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">`;
+      for (const c of cells) {
+        html += `<div style="flex:1;min-width:80px;background:#151518;border:1px solid #222;border-radius:6px;padding:8px;text-align:center">
+          <div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px">${c.label}</div>
+          <div style="font-size:16px;font-weight:700;color:${c.error ? '#f87171' : '#4ade80'};margin-top:2px">${c.time}</div>
+          ${c.tok ? `<div style="font-size:10px;color:#666;margin-top:2px">${c.tok}</div>` : ''}
+          ${c.model ? `<div style="font-size:9px;color:#444;margin-top:1px">${escHtml(c.model)}</div>` : ''}
+        </div>`;
+      }
+      if (totalTokensIn + totalTokensOut > 0) {
+        html += `<div style="flex:1;min-width:80px;background:#151518;border:1px solid #222;border-radius:6px;padding:8px;text-align:center">
+          <div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.5px">Total</div>
+          <div style="font-size:14px;font-weight:700;color:#818cf8;margin-top:2px">${(totalTokensIn + totalTokensOut).toLocaleString()}</div>
+          <div style="font-size:10px;color:#666;margin-top:2px">${totalTokensIn.toLocaleString()} in / ${totalTokensOut.toLocaleString()} out</div>
+        </div>`;
+      }
+      html += `</div></div>`;
+    }
+  }
+
+  // BSE metadata
+  html += `<div class="drawer-section">
+    <div class="drawer-section-title">Filing Details</div>
+    <div class="kv-list">
+      <div class="kv-row"><span class="kv-key">BSE Category</span><span class="kv-val">${escHtml(rec.bse_category || '—')}</span></div>
+      <div class="kv-row"><span class="kv-key">BSE Subcategory</span><span class="kv-val">${escHtml(rec.bse_subcategory || '—')}</span></div>
+      <div class="kv-row"><span class="kv-key">Filing Time</span><span class="kv-val">${fmtFull(rec.bse_time)}</span></div>
+      ${rec.processed_at ? `<div class="kv-row"><span class="kv-key">Processed At</span><span class="kv-val">${fmtFull(rec.processed_at)}</span></div>` : ''}
+    </div>
+  </div>`;
+
+  // Actions
+  html += `<div class="drawer-section">
+    <div class="drawer-actions">
+      ${rec.pdf_url ? `<a class="drawer-act-btn btn-primary" href="${escHtml(rec.pdf_url)}" target="_blank">&#128196; View PDF</a>` : ''}
+      ${rec.bse_url ? `<a class="drawer-act-btn btn-secondary" href="${escHtml(rec.bse_url)}" target="_blank">&#127759; BSE Page</a>` : ''}
+      ${rec.pdf_url ? `<button class="drawer-act-btn btn-secondary" onclick="openInExtractor('${escHtml(rec.id)}')">&#128280; Open in Extractor</button>` : ''}
+    </div>
+  </div>`;
+
+  document.getElementById('drawerBody').innerHTML = html;
+}
+
+function renderFinancialMiniTable(extracted) {
+  const sss = extracted?.smart_subcategory_specific;
+  if (!sss) return renderKeyValueExtraction(extracted);
+
+  let html = '';
+
+  // P&L
+  const pnl = sss.pnl_by_period;
+  if (pnl?.length) {
+    const rows = [
+      ['Sales', p => fmtNum(p.sales)],
+      ['Other Income', p => fmtNum(p.other_income)],
+      ['Total Expenses', p => fmtNum(p.total_expenses)],
+      ['Operating Profit', p => { const op = (p.sales||0) - ((p.total_expenses||0) - (p.interest||0) - (p.depreciation||0)); return p.sales ? fmtNum(op) : '—'; }],
+      ['Interest', p => fmtNum(p.interest)],
+      ['Depreciation', p => fmtNum(p.depreciation)],
+      ['PBT', p => fmtNum(p.profit_before_tax)],
+      ['Tax', p => fmtNum(p.tax_amount)],
+      ['PAT', p => `<span style="color:${colorPAT(p.pat)}">${fmtNum(p.pat)}</span>`],
+      ['EPS (₹)', p => fmtNum(p.eps_diluted || p.eps_basic)],
+    ];
+    html += buildFinTable('P&L (₹ Cr)', pnl, rows);
+  }
+
+  // Balance Sheet
+  const bs = sss.balance_sheet_by_period;
+  if (bs?.length) {
+    const rows = [
+      ['Equity Capital', p => fmtNum(p.equity_share_capital)],
+      ['Reserves', p => fmtNum(p.reserves_and_surplus)],
+      ['Borrowings', p => fmtNum(p.total_borrowings)],
+      ['Other Liabilities', p => fmtNum(p.other_liabilities)],
+      ['Total Liabilities', p => `<b>${fmtNum(p.total_liabilities)}</b>`],
+      ['Fixed Assets', p => fmtNum(p.fixed_assets_net)],
+      ['Investments', p => fmtNum(p.investments)],
+      ['Other Assets', p => fmtNum(p.other_assets)],
+      ['Total Assets', p => `<b>${fmtNum(p.total_assets)}</b>`],
+    ];
+    html += buildFinTable('Balance Sheet (₹ Cr)', bs, rows);
+  }
+
+  // Cash Flow
+  const cf = sss.cash_flow_by_period;
+  if (cf?.length) {
+    const rows = [
+      ['Operating', p => fmtNum(p.cash_from_operating)],
+      ['Investing', p => fmtNum(p.cash_from_investing)],
+      ['Financing', p => fmtNum(p.cash_from_financing)],
+      ['Net Cash Flow', p => `<b>${fmtNum(p.net_cash_flow)}</b>`],
+    ];
+    html += buildFinTable('Cash Flow (₹ Cr)', cf, rows);
+  }
+
+  // Shareholding
+  const sh = sss.shareholding_pattern;
+  if (sh && typeof sh === 'object') {
+    const items = Array.isArray(sh) ? sh : [sh];
+    if (items.length) {
+      let shHtml = '<div class="drawer-section"><div class="drawer-section-title">Shareholding</div><div class="kv-list">';
+      for (const s of items) {
+        if (s.promoter_holding != null) shHtml += `<div class="kv-row"><span class="kv-key">Promoter</span><span class="kv-val">${fmtNum(s.promoter_holding)}%</span></div>`;
+        if (s.public_holding != null) shHtml += `<div class="kv-row"><span class="kv-key">Public</span><span class="kv-val">${fmtNum(s.public_holding)}%</span></div>`;
+        if (s.fii_holding != null) shHtml += `<div class="kv-row"><span class="kv-key">FII</span><span class="kv-val">${fmtNum(s.fii_holding)}%</span></div>`;
+        if (s.dii_holding != null) shHtml += `<div class="kv-row"><span class="kv-key">DII</span><span class="kv-val">${fmtNum(s.dii_holding)}%</span></div>`;
+      }
+      shHtml += '</div></div>';
+      html += shHtml;
+    }
+  }
+
+  // Dividend
+  const div = sss.dividend_embedded;
+  if (div && typeof div === 'object' && (div.declared || div.amount_per_share)) {
+    html += `<div class="drawer-section"><div class="drawer-section-title">Dividend</div><div class="kv-list">`;
+    if (div.amount_per_share != null) html += `<div class="kv-row"><span class="kv-key">Per Share</span><span class="kv-val">₹${div.amount_per_share}</span></div>`;
+    if (div.dividend_type) html += `<div class="kv-row"><span class="kv-key">Type</span><span class="kv-val">${escHtml(div.dividend_type)}</span></div>`;
+    if (div.record_date) html += `<div class="kv-row"><span class="kv-key">Record Date</span><span class="kv-val">${escHtml(div.record_date)}</span></div>`;
+    html += `</div></div>`;
+  }
+
+  // Other insights
+  const insights = sss.other_insights;
+  if (insights && typeof insights === 'object') {
+    const fields = ['order_book', 'capacity_utilization', 'management_guidance', 'notable_quotes'];
+    let insHtml = '';
+    for (const f of fields) {
+      const val = insights[f];
+      if (val && val !== 'null') insHtml += `<div class="kv-row"><span class="kv-key">${escHtml(camelToLabel(f))}</span><span class="kv-val">${escHtml(typeof val === 'object' ? JSON.stringify(val) : String(val))}</span></div>`;
+    }
+    if (insHtml) html += `<div class="drawer-section"><div class="drawer-section-title">Insights</div><div class="kv-list">${insHtml}</div></div>`;
+  }
+
+  // Data integrity flags
+  const flags = sss.data_integrity_flags;
+  if (flags && typeof flags === 'object') {
+    const items = Array.isArray(flags) ? flags : Object.entries(flags).filter(([,v]) => v).map(([k,v]) => `${camelToLabel(k)}: ${v}`);
+    if (items.length) {
+      html += `<div class="drawer-section"><div class="drawer-section-title" style="color:#fbbf24">Data Integrity Flags</div>
+        <div style="background:#33250a;border:1px solid #665020;border-radius:6px;padding:8px;font-size:11px;color:#fde68a">
+        ${items.map(i => typeof i === 'string' ? escHtml(i) : escHtml(JSON.stringify(i))).join('<br>')}
+        </div></div>`;
+    }
+  }
+
+  if (!html) return renderKeyValueExtraction(extracted);
+  return html;
+}
+
+function buildFinTable(title, periods, rows) {
+  let h = `<div class="drawer-section"><div class="drawer-section-title">${escHtml(title)}</div>
+    <table class="mini-table"><thead><tr><th>Metric</th>`;
+  for (const p of periods) h += `<th>${escHtml(p.period_label || '')} ${p.scope === 'consolidated' ? '(C)' : '(S)'}</th>`;
+  h += '</tr></thead><tbody>';
+  for (const [label, fn] of rows) {
+    const allNull = periods.every(p => { const v = fn(p); return v === '—' || v === fmtNum(null); });
+    if (allNull) continue;
+    h += `<tr><td>${escHtml(label)}</td>`;
+    for (const p of periods) h += `<td>${fn(p)}</td>`;
+    h += '</tr>';
+  }
+  h += '</tbody></table></div>';
+  return h;
+}
+
+function colorPAT(v) {
+  if (v == null) return 'inherit';
+  return v >= 0 ? '#4ade80' : '#fca5a5';
+}
+
+function renderKeyValueExtraction(extracted) {
+  if (!extracted) return '';
+  const skip = new Set(['smart_subcategory', '_classifier_confidence', '_classifier_rationale', '_secondary_events', 'headline', 'summary', 'sentiment']);
+
+  function renderObj(obj, title) {
+    const scalars = [];
+    const nested = [];
+    for (const [k, v] of Object.entries(obj)) {
+      if (skip.has(k) || v == null || v === '') continue;
+      if (Array.isArray(v) && v.length === 0) continue;
+      if (typeof v === 'object' && !Array.isArray(v)) {
+        nested.push([k, v]);
+      } else if (Array.isArray(v)) {
+        scalars.push([k, v.map(i => typeof i === 'object' ? JSON.stringify(i) : String(i)).join(', ')]);
+      } else {
+        scalars.push([k, String(v)]);
+      }
+    }
+    let html = '';
+    if (scalars.length) {
+      html += `<div class="drawer-section">
+        <div class="drawer-section-title">${escHtml(title)}</div>
+        <div class="kv-list">${scalars.map(([k, v]) =>
+          `<div class="kv-row"><span class="kv-key">${escHtml(camelToLabel(k))}</span><span class="kv-val">${escHtml(v.length > 120 ? v.slice(0, 120) + '…' : v)}</span></div>`
+        ).join('')}</div>
+      </div>`;
+    }
+    for (const [k, v] of nested) {
+      html += renderObj(v, camelToLabel(k));
+    }
+    return html;
+  }
+
+  // Render top-level fields
+  let html = renderObj(extracted, 'Extracted Fields');
+
+  // Also render smart_subcategory_specific if present
+  const sss = extracted.smart_subcategory_specific;
+  if (sss && typeof sss === 'object') {
+    html += renderObj(sss, 'Category-Specific Data');
+  }
+
+  return html;
+}
+
+function openInExtractor(id) {
+  const rec = records.get(id);
+  if (!rec || !rec.pdf_url) return;
+  window.open(`/?url=${encodeURIComponent(rec.pdf_url)}`, '_blank');
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────
+function escHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+}
+
+function fmtFull(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function fmtRelTime(iso) {
+  if (!iso) return '—';
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60000)  return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  return Math.floor(diff / 3600000) + 'h ago';
+}
+
+function fmtNum(v) {
+  if (v == null) return '—';
+  return Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+}
+
+function cleanCompanyName(s) {
+  if (!s) return '';
+  // Remove trailing "-$" or "-$ " BSE suffix
+  return s.replace(/\s*-\$\s*$/, '').trim();
+}
+
+function camelToLabel(s) {
+  return s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function sentimentBadge(s) {
+  if (!s) return '<span style="color:#333;font-size:11px">—</span>';
+  const label = (typeof s === 'object' ? (s.label || s.sentiment || '') : String(s)).toLowerCase().trim();
+  if (!label) return '<span style="color:#333;font-size:11px">—</span>';
+  const cls = { very_positive: 'senti-very_positive', positive: 'senti-positive', neutral: 'senti-neutral', negative: 'senti-negative', very_negative: 'senti-very_negative' }[label] || 'senti-neutral';
+  const display = label.charAt(0).toUpperCase() + label.slice(1);
+  return `<span class="senti ${cls}">${escHtml(display)}</span>`;
+}
+
+function statusPill(s) {
+  const map = {
+    pending:                  ['s-pending',    '○ Pending'],
+    queued:                   ['s-pending',    '◷ Queued'],
+    processing:               ['s-processing', '<span class="spin">↻</span> Processing'],
+    classified_no_extractor:  ['s-classified', '◈ Classified'],
+    done:                     ['s-done',       '✓ Done'],
+    error:                    ['s-error',      '✕ Error'],
+  };
+  const [cls, label] = map[s] || ['s-pending', s || '—'];
+  return `<span class="status-pill ${cls}">${label}</span>`;
+}
+
+function scClass(cat) {
+  if (!cat) return 'sc-default';
+  const c = cat.toLowerCase();
+  if (c.includes('financial')) return 'sc-financial';
+  if (c.includes('order'))     return 'sc-order';
+  if (c.includes('fraud') || c.includes('default')) return 'sc-fraud';
+  if (c.includes('acquisition')) return 'sc-acquisition';
+  if (c.includes('merger') || c.includes('demerger')) return 'sc-merger';
+  if (c.includes('fund') || c.includes('raising')) return 'sc-fund';
+  if (c.includes('insolvency') || c.includes('cirp')) return 'sc-insolvency';
+  if (c.includes('promoter')) return 'sc-promo';
+  if (c.includes('management') || c.includes('key')) return 'sc-mgmt';
+  if (c.includes('routine') || c.includes('administrative')) return 'sc-routine';
+  return 'sc-default';
+}
+
+// ── Bootstrap ─────────────────────────────────────────────────────────
+async function init() {
+  // Load config into modal defaults
+  const cfg = loadConfig();
+
+  // Fetch initial status
+  await refreshStatus();
+
+  // Refresh status every 30s
+  setInterval(refreshStatus, 30000);
+
+  // Connect SSE (loads historical data + live updates)
+  connectSSE();
+
+  // Close drawer on Escape
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeDrawer(); closeConfig(); }
+  });
+
+  // Close modal on backdrop click
+  document.getElementById('configModal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeConfig();
+  });
+}
+
+init();
+</script>
+</body>
+</html>

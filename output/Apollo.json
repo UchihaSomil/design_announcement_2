@@ -1,0 +1,45 @@
+{
+  "smart_subcategory": "Regulatory approval/Licensing",
+  "headline": "Apollo Micro Systems granted lifetime arms manufacturing license by Government of India",
+  "summary": "Apollo Micro Systems received a lifetime license from DPIIT to manufacture high-value strategic weapon systems, including missiles, torpedoes, and loitering munitions. The license enables the company to transition from a subsystem provider to an end-to-end weapon platform manufacturer. Manufacturing will occur at the company's Hyderabad facilities, leveraging energetics expertise from its step-down subsidiary, IDL Explosives Limited.",
+  "sentiment": "very positive",
+  "key_entities": [
+    "DPIIT",
+    "Ministry of Commerce & Industry",
+    "Government of India",
+    "IDL Explosives Limited",
+    "Karunakar Reddy Baddam"
+  ],
+  "smart_subcategory_specific": {
+    "approval_type": "Arms Manufacturing License",
+    "issuing_authority": "DPIIT, Ministry of Commerce & Industry, Govt. of India",
+    "governing_law": "Arms Act, 1959",
+    "approval_date": "2026-04-10",
+    "announcement_date": "2026-04-17",
+    "validity": "Lifetime",
+    "applicant_category": "Manufacturer",
+    "scope_summary": "Manufacturing, assembling, integrating, and proof-testing of missiles, ATGMs, torpedoes, underwater mines, aerial bombs, rockets, and loitering munitions.",
+    "products_or_activities": [
+      "Missiles",
+      "ATGMs",
+      "Torpedoes",
+      "Underwater Mines",
+      "Aerial Bombs",
+      "Rockets",
+      "Loitering Munitions"
+    ],
+    "geography": "Hyderabad, Telangana",
+    "approved_capacity": "1,000 units per category",
+    "manufacturing_locations": [
+      "Plot No. 8 & 9, Hardware Park, Phase-II, Mamidipally Village, Hyderabad",
+      "Plot No. 128/A, Survey No. 125/Part, Road No. 12, IDA Mallapur, Hyderabad"
+    ],
+    "conditions_or_restrictions": null,
+    "financial_impact_disclosed": null,
+    "expected_revenue_impact_cr": null,
+    "expected_capex_cr": null,
+    "commercialization_timeline": null,
+    "related_party_involvement": "IDL Explosives Limited (Step-Down Subsidiary)",
+    "disclosure_regulation": "Regulation 30"
+  }
+}

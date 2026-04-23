@@ -1,0 +1,27 @@
+{
+  "smart_subcategory": "Change in Key Management",
+  "headline": "Bank of Baroda appoints Mr. Mehrotra Manish Nath as Head of Treasury & Global Markets",
+  "summary": "Bank of Baroda announced the appointment of Mr. Mehrotra Manish Nath as Head (In-Charge) of Treasury & Global Markets, Special Treasury, Mumbai effective April 18, 2026. He brings over 27 years of experience to the role.",
+  "sentiment": "neutral",
+  "key_entities": [
+    "Mehrotra Manish Nath",
+    "S Balakumar",
+    "BSE Ltd.",
+    "National Stock Exchange of India Ltd."
+  ],
+  "smart_subcategory_specific": {
+    "action": "appointment",
+    "person_name": "Mehrotra Manish Nath",
+    "role": "Head (In-Charge) - Treasury & Global Markets, Special Treasury, Mumbai",
+    "role_category": "kmp_other",
+    "effective_date": "2026-04-18",
+    "tenure_years": null,
+    "reason": "Appointment",
+    "reason_category": null,
+    "successor": null,
+    "successor_effective_date": null,
+    "is_promoter": false,
+    "previous_organization": null,
+    "remuneration_disclosed_cr": null
+  }
+}

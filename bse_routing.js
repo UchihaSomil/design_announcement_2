@@ -1,0 +1,267 @@
+// bse_routing.js
+// Maps BSE category + subcategory → { smart_subcategory, route }
+// route = "definite" → skip Step 1, use smart_subcategory directly
+// route = "llm"      → run Step 1 classifier to determine smart_subcategory
+
+export const BSE_ROUTING = {
+  "AGM/EGM": {
+    "AGM":                        { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Book Closure / AGM":         { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Court Convened Meeting":     { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "EGM":                        { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Postal Ballot":              { smart_subcategory: "Routine / Administrative", route: "definite" },
+  },
+
+  "Board Meeting": {
+    "Board Meeting":              { smart_subcategory: null, route: "llm" },
+    "Committee Meeting":          { smart_subcategory: null, route: "llm" },
+    "Outcome of Board Meeting":   { smart_subcategory: null, route: "llm" },
+  },
+
+  "Corp. Action": {
+    "Amalgamation / Merger / Demerger": { smart_subcategory: "Merger / Demerger",    route: "definite" },
+    "Bonds / Right issue":              { smart_subcategory: "Fund Raising",          route: "definite" },
+    "Bonus":                            { smart_subcategory: "Bonus / Stock Split",   route: "definite" },
+    "Book Closure":                     { smart_subcategory: null,                    route: "llm" },
+    "Capital Reduction":                { smart_subcategory: "Others",                route: "definite" },
+    "Consolidation of Shares":          { smart_subcategory: "Bonus / Stock Split",   route: "definite" },
+    "Dividend":                         { smart_subcategory: "Dividend",              route: "definite" },
+    "Record Date":                      { smart_subcategory: null,                    route: "llm" },
+    "Sub-division / Stock Split":       { smart_subcategory: "Bonus / Stock Split",   route: "definite" },
+  },
+
+  "Result": {
+    "Auditors Report":             { smart_subcategory: "Financial Updates", route: "definite" },
+    "Change in Accounting Year":   { smart_subcategory: "Financial Updates", route: "definite" },
+    "Financial Results":           { smart_subcategory: "Financial Updates", route: "definite" },
+    "Limited Review Report":       { smart_subcategory: "Financial Updates", route: "definite" },
+  },
+
+  "Integrated Filing": {
+    "Integrated Filing (Financial)":   { smart_subcategory: "Financial Updates", route: "definite" },
+    "Integrated Filing (Governance)":  { smart_subcategory: "Financial Updates", route: "definite" },
+  },
+
+  "Company Update": {
+    "Acquisition":                                              { smart_subcategory: "Acquisition",                   route: "definite" },
+    "Admission of application by Tribunal":                     { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Agreements / MOU":                                         { smart_subcategory: null,                            route: "llm" },
+    "Allotment of Equity Shares":                               { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Allotment of ESOP / ESPS":                                 { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Allotment of Warrants":                                    { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Alteration of Capital":                                    { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Amalgamation / Merger":                                    { smart_subcategory: "Merger / Demerger",             route: "definite" },
+    "Amendments to Memorandum & Articles of Association":       { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Analyst / Investor Meet":                                  { smart_subcategory: "Concall / Presentation",        route: "definite" },
+    "Annual Disclosure – Investor Complaints":             { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Annulment / Re-issue of forfeited shares":                 { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Appointment of Interim Resolution Professional (IRP)":     { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Approval of Resolution plan by Tribunal":                  { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Award of Order / Receipt of Order":                        { smart_subcategory: "Order Win",                     route: "definite" },
+    "Board Meeting Status Change":                              { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Buy back":                                                 { smart_subcategory: "Buyback",                       route: "definite" },
+    "Cancellation of Dividend":                                 { smart_subcategory: "Dividend",                      route: "definite" },
+    "Certificate under Reg. 74(5) of SEBI (DP) Regulations, 2018": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Cessation":                                                { smart_subcategory: "Change in Key Management",      route: "definite" },
+    "Change in Auditors":                                       { smart_subcategory: "Change in Key Management",      route: "definite" },
+    "Change in Financial Year":                                 { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Change in Management":                                     { smart_subcategory: "Change in Key Management",      route: "definite" },
+    "Change in Office Address":                                 { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Change of Name":                                           { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Clarification":                                            { smart_subcategory: null,                            route: "llm" },
+    "Clarification of News Item":                               { smart_subcategory: null,                            route: "llm" },
+    "Closure of Buy Back":                                      { smart_subcategory: "Buyback",                       route: "definite" },
+    "Closure of Trading Window":                                { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Code of Conduct under SEBI (PIT) Regulations, 2015":       { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Corporate Debt Restructuring":                             { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Corporate Insolvency Resolution Process":                  { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Credit Rating":                                            { smart_subcategory: "Credit Rating Change",          route: "definite" },
+    "De-merger":                                                { smart_subcategory: "Merger / Demerger",             route: "definite" },
+    "Debt Securities":                                          { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Declaration of Book Closure / Record Date":                { smart_subcategory: null,                            route: "llm" },
+    "Declaration of NAV":                                       { smart_subcategory: "Financial Updates",             route: "definite" },
+    "Delisting":                                                { smart_subcategory: "Others",                        route: "definite" },
+    "Demise":                                                   { smart_subcategory: "Change in Key Management",      route: "definite" },
+    "Disclosure of IDR Holding":                                { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Diversification / Disinvestment":                          { smart_subcategory: "Stake Sale / Disinvestment",    route: "definite" },
+    "Earnings Call Transcript":                                 { smart_subcategory: "Concall / Presentation",        route: "definite" },
+    "FCCBs":                                                    { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Filing of Resolution plan with Tribunal":                  { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Funds raising by issuance of Debt Securities by Large Entities": { smart_subcategory: "Fund Raising",           route: "definite" },
+    "General":                                                  { smart_subcategory: null,                            route: "llm" },
+    "Impact of Audit Qualifications":                           { smart_subcategory: "Financial Updates",             route: "definite" },
+    "Incorporation":                                            { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Increase of Authorised Capital":                           { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Initiation of CIRP":                                       { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Institutional Placement Programme":                        { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Intimation of meeting of Committee of Creditors":          { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Intimation on Fraud":                                      { smart_subcategory: "Fraud / Default",               route: "definite" },
+    "Intimation on OTS and Restructuring Loans or Borrowings":  { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Investor Presentation":                                    { smart_subcategory: "Concall / Presentation",        route: "definite" },
+    "Invitation of Resolution Plan":                            { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Issue of Securities":                                      { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Joint Venture":                                            { smart_subcategory: "Joint Venture / Strategic Partnership", route: "definite" },
+    "Liquidation - Corporate Insolvency Resolution Process (CIRP)": { smart_subcategory: "Insolvency / CIRP",        route: "definite" },
+    "List of Creditors":                                        { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Loss of Share Certificate and Issue of Duplicate Share Certificate or Letter of Confirmation": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Management Resignation":                                   { smart_subcategory: "Change in Key Management",      route: "definite" },
+    "Meeting Updates":                                          { smart_subcategory: null,                            route: "llm" },
+    "Monitoring Agency Report":                                 { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Monthly AUM Disclosure":                                   { smart_subcategory: "Financial Updates",             route: "definite" },
+    "Monthly Business Updates":                                 { smart_subcategory: null,                            route: "llm" },
+    "NAV Declaration":                                          { smart_subcategory: "Financial Updates",             route: "definite" },
+    "NCLT / Court Convened Meeting":                            { smart_subcategory: null,                            route: "llm" },
+    "New Management":                                           { smart_subcategory: "Change in Key Management",      route: "definite" },
+    "Newspaper Publication":                                    { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Notice of Shareholders Meetings - Annual General Meeting": { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Notice of Shareholders Meetings - Extra-ordinary Meeting": { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Notice of Shareholders Meetings - NCLT / Court Convened Meeting": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Notice of Shareholders Meetings - Postal Ballot":          { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Offer for Sale":                                           { smart_subcategory: "Stake Sale / Disinvestment",    route: "definite" },
+    "Open Offer":                                               { smart_subcategory: "Open Offer / Takeover",         route: "definite" },
+    "Open Offer - Updates":                                     { smart_subcategory: "Open Offer / Takeover",         route: "definite" },
+    "Other Restructuring":                                      { smart_subcategory: null,                            route: "llm" },
+    "Others":                                                   { smart_subcategory: null,                            route: "llm" },
+    "Outcome of meeting of Committee of Creditors":             { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Post Buyback Public Announcement":                         { smart_subcategory: "Buyback",                       route: "definite" },
+    "Post Offer Public Announcement":                           { smart_subcategory: "Open Offer / Takeover",         route: "definite" },
+    "Preferential Issue":                                       { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Press Release":                                            { smart_subcategory: null,                            route: "llm" },
+    "Public Announcement":                                      { smart_subcategory: null,                            route: "llm" },
+    "Public Announcement - Buyback of Shares":                  { smart_subcategory: "Buyback",                       route: "definite" },
+    "Public Announcement - Delisting":                          { smart_subcategory: "Others",                        route: "definite" },
+    "Public Announcement - Open Offer":                         { smart_subcategory: "Open Offer / Takeover",         route: "definite" },
+    "Qualified Institutional Placement":                        { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Quarterly AUM Disclosure":                                 { smart_subcategory: "Financial Updates",             route: "definite" },
+    "Raising of Funds":                                         { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Reg. 13(3) - Statement of Investor Complaints":            { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Reg. 30 - Awarding of orders/contracts":                   { smart_subcategory: "Order Win",                     route: "definite" },
+    "Reg. 32 - Statement of Deviation & Variation":             { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Reg. 40(10) - PCS Certificate for Transfer / Transmission / Transposition": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 7(3) - Compliance Certificate (RTA & Compliance Officer)": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 24(A) - Annual Secretarial Compliance":               { smart_subcategory: "Routine / Administrative",      route: "definite" },
+    "Rejection of Resolution Plan by Tribunal":                 { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Replacement of Interim Resolution Professional (IRP)":     { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Resolution Plans received by Resolution Professional":     { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Restructuring":                                            { smart_subcategory: null,                            route: "llm" },
+    "Retirement":                                               { smart_subcategory: "Change in Key Management",      route: "definite" },
+    "Revision of outcome":                                      { smart_subcategory: null,                            route: "llm" },
+    "Sale of shares":                                           { smart_subcategory: null,                            route: "llm" },
+    "Sale or disposal":                                         { smart_subcategory: null,                            route: "llm" },
+    "Scheme of Arrangement":                                    { smart_subcategory: "Merger / Demerger",             route: "definite" },
+    "Shareholding":                                             { smart_subcategory: null,                            route: "llm" },
+    "Slump Sale":                                               { smart_subcategory: "Merger / Demerger",             route: "definite" },
+    "Strikes / Lockouts / Disturbances":                        { smart_subcategory: "Operational Disruption",        route: "definite" },
+    "Trading Plan under SEBI (PIT) Regulations, 2015":          { smart_subcategory: "Promoter Buy / Sell",           route: "definite" },
+    "Update - Acquisition / Scheme / Sale / Disposal / Reg 30": { smart_subcategory: null,                           route: "llm" },
+    "Updates - Corporate Insolvency Resolution Process (CIRP)": { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+    "Utilisation of Funds":                                     { smart_subcategory: "Fund Raising",                  route: "definite" },
+    "Voluntary Delisting":                                      { smart_subcategory: "Others",                        route: "definite" },
+    "Winding-up":                                               { smart_subcategory: "Insolvency / CIRP",             route: "definite" },
+  },
+
+  "Insider Trading / SAST": {
+    "Closure of Trading Window":                                                                        { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Disclosures under Reg. 10(5) in respect of acquisition under Reg. 10(1)(a) of SEBI (SAST) Reg. 2011": { smart_subcategory: "Open Offer / Takeover",  route: "definite" },
+    "Disclosures under Reg. 10(5) in respect of acquisition under Reg. 10(4)(e) of SEBI (SAST) Reg. 2011": { smart_subcategory: "Open Offer / Takeover",  route: "definite" },
+    "Disclosures under Reg. 10(5) in respect of acquisition under Reg. 10(4)(f) of SEBI (SAST) Reg. 2011": { smart_subcategory: "Open Offer / Takeover",  route: "definite" },
+    "Disclosures under Reg. 10(6) of SEBI (SAST) Regulations, 2011":                                   { smart_subcategory: "Open Offer / Takeover",      route: "definite" },
+    "Disclosures under Reg. 10(7) of SEBI (SAST) Regulations, 2011":                                   { smart_subcategory: "Open Offer / Takeover",      route: "definite" },
+    "Disclosures under Reg. 18(6) of SEBI (SAST) Regulations, 2011":                                   { smart_subcategory: "Open Offer / Takeover",      route: "definite" },
+    "Disclosures under Reg. 29(1) of SEBI (SAST) Regulations, 2011":                                   { smart_subcategory: "Promoter Buy / Sell",         route: "definite" },
+    "Disclosures under Reg. 29(2) of SEBI (SAST) Regulations, 2011":                                   { smart_subcategory: "Promoter Buy / Sell",         route: "definite" },
+    "Disclosures under Reg. 3(3) of SEBI (SAST) Regulations, 1997":                                    { smart_subcategory: "Promoter Buy / Sell",         route: "definite" },
+    "Disclosures under Reg. 31(1) and 31(2) of SEBI (SAST) Regulations, 2011":                         { smart_subcategory: "Promoter Buy / Sell",         route: "definite" },
+    "Disclosures under Reg. 7(1) of SEBI (SAST) Regulations, 1997":                                    { smart_subcategory: "Promoter Buy / Sell",         route: "definite" },
+    "Disclosures under Reg. 7(1A) of SEBI (SAST) Regulations, 1997":                                   { smart_subcategory: "Promoter Buy / Sell",         route: "definite" },
+    "Disclosures under Reg. 7(2) read with Reg. 6(2) of SEBI (PIT) Regulations, 2015":                 { smart_subcategory: "Promoter Buy / Sell",         route: "definite" },
+    "Disclosures under Reg. 7(3) of SEBI (SAST) Regulations, 1997":                                    { smart_subcategory: "Promoter Buy / Sell",         route: "definite" },
+    "Disclosures under Reg. 8A of SEBI (SAST) Regulations, 1997":                                      { smart_subcategory: "Promoter Buy / Sell",         route: "definite" },
+    "Disclosures under Reg. 13(4) of SEBI (Prohibition of Insider Trading) Regulations, 1992":         { smart_subcategory: "Promoter Buy / Sell",         route: "definite" },
+    "Disclosures under Reg. 13(4), 13(4A) of SEBI (Prohibition of Insider Trading) Regulations, 1992": { smart_subcategory: "Promoter Buy / Sell",        route: "definite" },
+    "Disclosures under Reg. 13(4), 13(4A) and 13(6) of SEBI (Prohibition of Insider Trading) Regulations, 1992": { smart_subcategory: "Promoter Buy / Sell", route: "definite" },
+    "Disclosures under Reg. 13(4A) of SEBI (Prohibition of Insider Trading) Regulations, 1992":        { smart_subcategory: "Promoter Buy / Sell",         route: "definite" },
+    "Disclosures under Reg. 13(6) of SEBI (Prohibition of Insider Trading) Regulations, 1992":         { smart_subcategory: "Promoter Buy / Sell",         route: "definite" },
+  },
+
+  "Others": {
+    "57 (4) : Prior intimation to the beginning of the quarter":        { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "57 (5) : Intimation after the end of quarter":                     { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Asset Liability Management (ALM) statement":                       { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Business Responsibility and Sustainability Reporting (BRSR)":      { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Certificate from CEO/CFO":                                         { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Certificate under Reg. 54 (5) of SEBI (DP) Regulations, 1996":    { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Compliance under Regulation 52(6) of SEBI (LODR), 2015":          { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Details of Compliance officer and RTA of the Company":             { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Disclosure of divergence in the asset classification and provisioning by banks": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Disclosure under Reg. 31(4) of SEBI (SAST) Regulation, 2011":     { smart_subcategory: "Promoter Buy / Sell",       route: "definite" },
+    "Disclosures by listed entities of defaults on payment of interest/repayment of principal amount for loans including revolving facilities like cash credit from banks / financial institutions and unlisted debt securities i.e. NCDs and NCRPS": { smart_subcategory: "Fraud / Default", route: "definite" },
+    "Disclosures by listed entities of defaults on payment of interest/repayment of principal amount for unlisted debt securities i.e. NCDs and NCRPS": { smart_subcategory: "Fraud / Default", route: "definite" },
+    "Disclosures of reasons for encumbrance by promoter of listed companies under Reg. 31(1) read with Regulation 28(3) of SEBI (SAST) Regulations, 2011": { smart_subcategory: "Promoter Buy / Sell", route: "definite" },
+    "Format of the Annual Disclosure to be made by an entity identified as a Large Corporate": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Format of the Annual Disclosure to be made by an entity identified as a LC : Annexure B1": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Format of the Annual Disclosure to be made by an entity identified as a LC : Annexure B2": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Format of the Initial Disclosure to be made by an entity identified as a Large Corporate : Annexure A": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Half Yearly Communication - Debt Instruments":                     { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Half Yearly Report (SEBI Circular No. CIR/IMD/DF-1/67/2017)":     { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Intimation of Repayment of Commercial Paper (CP)":                 { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Mutual Fund Scheme Summary Document":                              { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Outcome without intimation":                                       { smart_subcategory: null,                        route: "llm" },
+    "Quarterly Disclosures by listed entities of defaults on payment of interest/repayment of principal amount on loans from banks / financial institutions and unlisted debt securities": { smart_subcategory: "Fraud / Default", route: "definite" },
+    "Record Date/Book Closure as per Regulation (60)":                  { smart_subcategory: null,                        route: "llm" },
+    "Reg 56 - Documents and Intimation to Debenture Trustee":           { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 34 (1) Annual Report":                                        { smart_subcategory: "Financial Updates",         route: "definite" },
+    "Reg. 39 (3) - Details of Loss of Certificate / Duplicate Certificate": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 50 (1) - Prior intimation about Board meeting under Regulation 50(1)": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 50 (1) - Prior intimation for Interest Payment / Redemption": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 50 (2) - Intimation to Exchange about Intention to raise Funds": { smart_subcategory: "Fund Raising",           route: "definite" },
+    "Reg. 50 (2) - Intimation to the Exchange about meeting under 50(2)": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 50 (3) - Board Meeting Intimation":                           { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 51 (1), (2) - Price Sensitive information / disclosure of event / Information": { smart_subcategory: null, route: "llm" },
+    "Reg. 52 (5) - Certificate from Debenture Trustee":                 { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 52 (7) - Statement of Material Deviations in proceeds of issue of NCD / NCRP": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 52 - Declaration for Audit Report/s with Unmodified Opinion(s)": { smart_subcategory: "Financial Updates",     route: "definite" },
+    "Reg. 52 - Financial Result":                                       { smart_subcategory: "Financial Updates",         route: "definite" },
+    "Reg. 52 - Statement of Impact on Audit Qualifications":            { smart_subcategory: "Financial Updates",         route: "definite" },
+    "Reg. 53 - Annual Report":                                          { smart_subcategory: "Financial Updates",         route: "definite" },
+    "Reg. 54 - Asset Cover details":                                    { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 55 - Credit Rating":                                          { smart_subcategory: "Credit Rating Change",      route: "definite" },
+    "Reg. 57 (1) - Certificate of interest payment/Principal in case of NCD": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 57 (2) - Undertaking that documents & intimation submitted to Debenture trustee": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 59 - Prior approval from Stock Exchange for material modification in structure of NCD / NCRP": { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Reg. 60 (2) - Record Date - interest/dividend/redemption/repayment": { smart_subcategory: null,                     route: "llm" },
+    "Reg. 7 (2) - Prohibition of Insider Trading Regulations, 2015":    { smart_subcategory: "Promoter Buy / Sell",       route: "definite" },
+    "Reg. 7 (5) - Appointment / Change of RTA":                         { smart_subcategory: "Routine / Administrative", route: "definite" },
+    "Regulation 61(4) - PCS Certificate for Transfer / Transmission / Transposition": { smart_subcategory: "Routine / Administrative", route: "definite" },
+  },
+};
+
+/**
+ * Resolve a BSE category + subcategory to a routing decision.
+ * Tries exact match first, then falls back to case-insensitive trimmed match.
+ * Returns { smart_subcategory, route } — never throws.
+ */
+export function resolveRoute(bseCategoryName, bseSubcatName) {
+  const fallback = { smart_subcategory: null, route: 'llm' };
+
+  const catMap = BSE_ROUTING[bseCategoryName];
+  if (!catMap) {
+    // Try case-insensitive match on category
+    const catKey = Object.keys(BSE_ROUTING).find(
+      k => k.trim().toLowerCase() === (bseCategoryName || '').trim().toLowerCase()
+    );
+    if (!catKey) return fallback;
+    return resolveRoute(catKey, bseSubcatName);
+  }
+
+  const exact = catMap[bseSubcatName];
+  if (exact) return exact;
+
+  // Case-insensitive trimmed fallback
+  const subKey = Object.keys(catMap).find(
+    k => k.trim().toLowerCase() === (bseSubcatName || '').trim().toLowerCase()
+  );
+  if (subKey) return catMap[subKey];
+
+  return fallback;
+}

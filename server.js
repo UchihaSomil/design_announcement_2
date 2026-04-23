@@ -1,0 +1,778 @@
+import express from 'express';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import https from 'https';
+import http from 'http';
+import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { startPoller } from './poller.js';
+
+const require = createRequire(import.meta.url);
+const PDFParser = require('pdf2json');
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const app = express();
+const upload = multer({ dest: path.join(__dirname, 'uploads/') });
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+// ── SSE ──────────────────────────────────────────────────────────
+const clients = new Map();
+
+// Short-lived store so the /retry endpoint can re-use the same PDF contents + cfg
+// that the original job used. Kept small (TTL 30 min).
+const jobMemory = new Map();
+function setJobMemory(requestId, data) {
+  jobMemory.set(requestId, { ...data, savedAt: Date.now() });
+  // GC entries older than 30 min.
+  for (const [k, v] of jobMemory.entries()) {
+    if (Date.now() - v.savedAt > 30 * 60 * 1000) jobMemory.delete(k);
+  }
+}
+
+function sendEvent(requestId, event, data) {
+  const safeName = event === 'error' ? 'fail' : event;
+  const line = `event: ${safeName}\ndata: ${JSON.stringify(data)}\n\n`;
+  const entry = clients.get(requestId);
+  if (!entry) return;
+  if (entry.res) entry.res.write(line);
+  else entry.buffer.push(line);
+}
+
+app.get('/stream/:requestId', (req, res) => {
+  const { requestId } = req.params;
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  const entry = clients.get(requestId);
+  if (entry) {
+    entry.res = res;
+    for (const line of entry.buffer) res.write(line);
+    entry.buffer = [];
+  } else {
+    clients.set(requestId, { res, buffer: [] });
+  }
+  req.on('close', () => { const e = clients.get(requestId); if (e) e.res = null; });
+});
+
+// ── Helpers ───────────────────────────────────────────────────────
+function extractTextFromPDF(pdfPath) {
+  return new Promise((resolve, reject) => {
+    const parser = new PDFParser();
+    parser.on('pdfParser_dataReady', data => {
+      const safe = s => { try { return decodeURIComponent(s); } catch { return s; } };
+      resolve(data.Pages.map(pg => pg.Texts.map(t => safe(t.R.map(r => r.T).join(''))).join(' ')).join('\n'));
+    });
+    parser.on('pdfParser_dataError', err => reject(new Error(err.parserError || String(err))));
+    parser.loadPDF(pdfPath);
+  });
+}
+
+async function downloadFile(url, dest) {
+  const resp = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Referer': 'https://www.bseindia.com/',
+    },
+    redirect: 'follow',
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} downloading ${url}`);
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  fs.writeFileSync(dest, buffer);
+}
+
+// ── Prompt loading ────────────────────────────────────────────────
+const SYSTEM_INSTRUCTION = fs.readFileSync(path.join(__dirname, 'system_prompt.txt'), 'utf8');
+
+function loadPrompt(name) {
+  const safe = name.replace(/[^a-z0-9_]/gi, '');
+  try { return fs.readFileSync(path.join(__dirname, 'system_prompts', `${safe}.md`), 'utf8'); }
+  catch { return null; }
+}
+
+// Serve default prompt files so the UI modal can display them.
+app.get('/prompts/:name', (req, res) => {
+  const txt = loadPrompt(req.params.name);
+  if (txt == null) return res.status(404).send('');
+  res.type('text/plain').send(txt);
+});
+
+// Map smart_subcategory -> step2 prompt file slug. Only Financial Updates is wired up for now.
+const STEP2_PROMPT_FILES = {
+  'Financial Updates':                     'step2_financial_updates',
+  'Concall/Presentation':                  'step2_concall_presentation',
+  'Dividend':                              'step2_dividend',
+  'Buyback':                               'step2_buyback',
+  'Bonus/Stock Split':                     'step2_bonus_stock_split',
+  'Acquisition':                           'step2_acquisition',
+  'Merger/Demerger':                       'step2_merger_demerger',
+  'Joint Venture/Strategic Partnership':   'step2_joint_venture',
+  'Order Win':                             'step2_order_win',
+  'Capacity Expansion/Capex':              'step2_capacity_expansion',
+  'Product Launch':                        'step2_product_launch',
+  'Fund Raising':                          'step2_fund_raising',
+  'Stake Sale/Disinvestment':              'step2_stake_sale',
+  'Credit Rating Change':                  'step2_credit_rating_change',
+  'Regulatory Action/Penalty':             'step2_regulatory_action',
+  'Fraud/Default':                         'step2_fraud_default',
+  'Insolvency/CIRP':                       'step2_insolvency_cirp',
+  'Open Offer/Takeover':                   'step2_open_offer',
+  'Promoter Buy/Sell':                     'step2_promoter_buy_sell',
+  'Change in Key Management':              'step2_change_in_key_management',
+  'Operational Disruption':                'step2_operational_disruption',
+  'Others':                                'step2_others',
+  'Routine/Administrative':                'step2_routine_administrative',
+  'Regulatory Approval/Licensing':         'step2_regulatory_approval',
+};
+
+// ── Context cache manager ─────────────────────────────────────────
+// Keyed by apiKey+model+cacheTag so each combination gets its own cache.
+const cacheStore = new Map();
+const CACHEABLE_MODELS = ['gemini-3.1-flash-lite-preview', 'gemini-2.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-3.1-pro-preview'];
+const CACHE_TTL_SECS = 23 * 60 * 60;
+const CACHE_REFRESH_BEFORE_SECS = 30 * 60;
+
+async function getOrCreateCache(apiKey, modelId, systemText, cacheTag) {
+  if (!CACHEABLE_MODELS.includes(modelId)) return null;
+
+  const key = `${apiKey}::${modelId}::${cacheTag || 'default'}`;
+  const existing = cacheStore.get(key);
+
+  if (existing) {
+    const secsRemaining = (existing.expiresAt - Date.now()) / 1000;
+    if (secsRemaining > CACHE_REFRESH_BEFORE_SECS) {
+      return existing.cacheName;
+    }
+    console.log(`[cache] Refreshing cache for ${modelId}/${cacheTag || 'default'} (${Math.round(secsRemaining / 60)}m remaining)`);
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+  try {
+    const cache = await ai.caches.create({
+      model: modelId,
+      config: {
+        systemInstruction: { parts: [{ text: systemText }] },
+        ttl: `${CACHE_TTL_SECS}s`,
+      },
+    });
+    cacheStore.set(key, {
+      cacheName: cache.name,
+      expiresAt: Date.now() + CACHE_TTL_SECS * 1000,
+    });
+    console.log(`[cache] Created cache ${cache.name} for ${modelId}/${cacheTag || 'default'}, TTL ${CACHE_TTL_SECS / 3600}h`);
+    return cache.name;
+  } catch (err) {
+    console.warn(`[cache] Failed to create cache for ${modelId}/${cacheTag || 'default'} (${err.message}) — falling back to inline system prompt`);
+    return null;
+  }
+}
+
+// ── Groq call (OpenAI-compatible chat.completions) ────────────────
+// Groq is text-only — no PDF/image support. `contents` is converted by extracting any text parts.
+async function callGroq(requestId, cfg, contents, systemPromptText, opts = {}) {
+  const { stepTag = null, emitDone = true } = opts;
+  const apiKey = cfg.groqApiKey || process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    sendEvent(requestId, 'fail', { message: 'No Groq API key provided. Paste it in the sidebar.', step: stepTag });
+    return null;
+  }
+  const modelId = cfg.groqModel || 'llama-3.3-70b-versatile';
+
+  // Flatten `contents` (Gemini-shaped messages) into plain user text for Groq.
+  const userText = (contents || [])
+    .flatMap(msg => (msg.parts || []))
+    .map(p => p.text || '')
+    .filter(Boolean)
+    .join('\n\n');
+
+  if (!userText || userText.length < 20) {
+    sendEvent(requestId, 'fail', {
+      message: 'Groq is text-only and no extractable text was found. Use Text mode (not Base64/Files API) with a text-layer PDF.',
+      step: stepTag,
+    });
+    return null;
+  }
+
+  sendEvent(requestId, 'cache', { hit: false, step: stepTag });
+
+  const body = {
+    model: modelId,
+    messages: [
+      { role: 'system', content: systemPromptText },
+      { role: 'user',   content: userText },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: cfg.temperature != null ? cfg.temperature : 0,
+    max_tokens: cfg.maxTokens || 32768,
+  };
+
+  const MAX_RETRIES = 4;
+  const RETRYABLE = [429, 500, 502, 503];
+  let fullResponse = '';
+  let usageMeta = null;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    fullResponse = '';
+    const t0 = Date.now();
+    sendEvent(requestId, 'attempt', { attempt, total: MAX_RETRIES, step: stepTag });
+
+    try {
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`HTTP ${resp.status} — ${errText.slice(0, 200)}`);
+      }
+      const json = await resp.json();
+      fullResponse = json.choices?.[0]?.message?.content || '';
+      if (json.usage) {
+        usageMeta = {
+          promptTokenCount: json.usage.prompt_tokens,
+          candidatesTokenCount: json.usage.completion_tokens,
+          totalTokenCount: json.usage.total_tokens,
+        };
+      }
+      sendEvent(requestId, 'chunk', { partial: fullResponse.slice(-300), step: stepTag });
+      sendEvent(requestId, 'attempt_done', { attempt, ms: Date.now() - t0, success: true, step: stepTag });
+      break;
+    } catch (err) {
+      const ms = Date.now() - t0;
+      const isRetryable = RETRYABLE.some(c => String(err.message).includes(String(c)));
+      sendEvent(requestId, 'attempt_done', { attempt, ms, success: false, error: err.message, step: stepTag });
+      if (isRetryable && attempt < MAX_RETRIES) {
+        const wait = attempt * 8;
+        sendEvent(requestId, 'retry', { attempt, nextAttempt: attempt + 1, total: MAX_RETRIES, waitSecs: wait, step: stepTag });
+        await new Promise(r => setTimeout(r, wait * 1000));
+        continue;
+      }
+      sendEvent(requestId, 'fail', { message: `Groq API failed after ${attempt} attempt(s): ${err.message}`, step: stepTag });
+      return null;
+    }
+  }
+
+  if (usageMeta) {
+    sendEvent(requestId, 'tokens', {
+      input: usageMeta.promptTokenCount || 0,
+      output: usageMeta.candidatesTokenCount || 0,
+      total: usageMeta.totalTokenCount || 0,
+      step: stepTag,
+    });
+  }
+
+  sendEvent(requestId, 'stage', { stage: 'parsing', message: 'Parsing JSON response...', step: stepTag });
+
+  let parsed;
+  try {
+    const raw = JSON.parse(fullResponse);
+    parsed = Array.isArray(raw) ? raw[0] : raw;
+  } catch {
+    sendEvent(requestId, 'fail', { message: 'Groq response was not valid JSON.', step: stepTag });
+    return null;
+  }
+
+  if (emitDone) sendEvent(requestId, 'done', { result: parsed });
+  return { parsed, usageMeta };
+}
+
+// Provider dispatch — Gemini or Groq, same shape.
+async function callProvider(requestId, cfg, contents, systemPromptText, opts = {}) {
+  if (cfg.provider === 'groq') {
+    return callGroq(requestId, cfg, contents, systemPromptText, opts);
+  }
+  return callGemini(requestId, cfg, contents, systemPromptText, opts);
+}
+
+// ── Shared Gemini call ────────────────────────────────────────────
+async function callGemini(requestId, cfg, contents, systemPromptText, opts = {}) {
+  const { stepTag = null, cacheTag = null, emitDone = true } = opts;
+  const apiKey = cfg.apiKey || process.env.GEMINI_API_KEY;
+  const ai = new GoogleGenAI({ apiKey });
+  const modelId = cfg.model || 'gemini-3.1-flash-lite-preview';
+
+  const cacheName = cacheTag ? await getOrCreateCache(apiKey, modelId, systemPromptText, cacheTag) : null;
+
+  const genConfig = {
+    responseMimeType: cfg.mime || 'application/json',
+  };
+
+  if (cacheName) {
+    genConfig.cachedContent = cacheName;
+    sendEvent(requestId, 'cache', { hit: true, cacheName, step: stepTag });
+  } else {
+    genConfig.systemInstruction = [{ text: systemPromptText }];
+    sendEvent(requestId, 'cache', { hit: false, step: stepTag });
+  }
+
+  const isGemma = modelId.startsWith('gemma-');
+  if (isGemma) {
+    genConfig.responseMimeType = 'text/plain';
+  } else {
+    const THINKING_MODELS = ['gemini-2.5', 'gemini-3'];
+    const supportsThinking = THINKING_MODELS.some(p => modelId.includes(p));
+    if (cfg.thinkingEnabled !== false && supportsThinking)
+      genConfig.thinkingConfig = { thinkingLevel: ThinkingLevel[cfg.thinkingLevel] || ThinkingLevel.MINIMAL };
+    if (cfg.temperature != null && !supportsThinking) genConfig.temperature = cfg.temperature;
+  }
+  if (cfg.maxTokens) genConfig.maxOutputTokens = cfg.maxTokens;
+
+  const MAX_RETRIES = 4;
+  const RETRYABLE = [429, 503, 502, 500];
+  let fullResponse = '';
+  let usageMeta = null;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    fullResponse = '';
+    const t0 = Date.now();
+    sendEvent(requestId, 'attempt', { attempt, total: MAX_RETRIES, step: stepTag });
+
+    try {
+      const stream = await ai.models.generateContentStream({
+        model: modelId,
+        config: genConfig,
+        contents,
+      });
+
+      for await (const chunk of stream) {
+        if (chunk.text) {
+          fullResponse += chunk.text;
+          sendEvent(requestId, 'chunk', { partial: fullResponse.slice(-300), step: stepTag });
+        }
+        if (chunk.usageMetadata) usageMeta = chunk.usageMetadata;
+      }
+
+      sendEvent(requestId, 'attempt_done', { attempt, ms: Date.now() - t0, success: true, step: stepTag });
+      break;
+
+    } catch (err) {
+      const ms = Date.now() - t0;
+      const isRetryable = RETRYABLE.some(c => String(err.message).includes(String(c)));
+      sendEvent(requestId, 'attempt_done', { attempt, ms, success: false, error: err.message, step: stepTag });
+
+      if (isRetryable && attempt < MAX_RETRIES) {
+        const wait = attempt * 8;
+        sendEvent(requestId, 'retry', { attempt, nextAttempt: attempt + 1, total: MAX_RETRIES, waitSecs: wait, step: stepTag });
+        await new Promise(r => setTimeout(r, wait * 1000));
+        continue;
+      }
+      sendEvent(requestId, 'fail', { message: `API failed after ${attempt} attempt(s): ${err.message}`, step: stepTag });
+      return null;
+    }
+  }
+
+  if (usageMeta) {
+    sendEvent(requestId, 'tokens', {
+      input: usageMeta.promptTokenCount || 0,
+      output: usageMeta.candidatesTokenCount || 0,
+      total: usageMeta.totalTokenCount || 0,
+      step: stepTag,
+    });
+  }
+
+  sendEvent(requestId, 'stage', { stage: 'parsing', message: 'Parsing JSON response...', step: stepTag });
+
+  let parsed;
+  try {
+    const raw = JSON.parse(fullResponse);
+    parsed = Array.isArray(raw) ? raw[0] : raw;
+  } catch {
+    sendEvent(requestId, 'fail', { message: 'Response was not valid JSON.', step: stepTag });
+    return null;
+  }
+
+  if (emitDone) sendEvent(requestId, 'done', { result: parsed });
+  return { parsed, usageMeta };
+}
+
+// ── Content preparation shared by Single and Double modes ─────────
+async function prepareContents(filePath, filename, uploadMode, requestId, apiKey) {
+  if (uploadMode === 'text') {
+    sendEvent(requestId, 'stage', { stage: 'extracting', message: 'Parsing text from PDF...' });
+    let text;
+    try { text = await extractTextFromPDF(filePath); }
+    catch (err) { sendEvent(requestId, 'fail', { message: `Text extraction failed: ${err.message}` }); return null; }
+    if (!text || text.trim().length < 50) {
+      sendEvent(requestId, 'fail', { message: 'Extracted text too short — may be a scanned PDF.' });
+      return null;
+    }
+    sendEvent(requestId, 'stage', { stage: 'extracted', message: `Extracted ${text.length.toLocaleString()} characters` });
+    sendEvent(requestId, 'extracted_text', { text, mode: 'text' });
+    return [{ role: 'user', parts: [{ text: `filing_text:\n${text}` }] }];
+  }
+
+  if (uploadMode === 'base64') {
+    sendEvent(requestId, 'stage', { stage: 'extracting', message: 'Encoding PDF as base64...' });
+    let base64, sizeKb;
+    try {
+      const buffer = fs.readFileSync(filePath);
+      base64 = buffer.toString('base64');
+      sizeKb = (buffer.length / 1024).toFixed(1);
+    } catch (err) {
+      sendEvent(requestId, 'fail', { message: `Failed to read PDF: ${err.message}` });
+      return null;
+    }
+    sendEvent(requestId, 'stage', { stage: 'extracted', message: `Encoded ${sizeKb} KB — sending inline` });
+    sendEvent(requestId, 'extracted_text', { text: `[PDF sent as base64 inline — ${sizeKb} KB]\nGemini reads the raw PDF layout directly, including tables and formatting.`, mode: 'base64' });
+    return [{
+      role: 'user',
+      parts: [
+        { inlineData: { mimeType: 'application/pdf', data: base64 } },
+        { text: 'Extract structured data from this filing.' },
+      ],
+    }];
+  }
+
+  // filesapi
+  sendEvent(requestId, 'stage', { stage: 'extracting', message: 'Uploading PDF to Gemini Files API...' });
+  let fileUri;
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const buffer = fs.readFileSync(filePath);
+    const blob = new Blob([buffer], { type: 'application/pdf' });
+    const uploaded = await ai.files.upload({
+      file: blob,
+      config: { mimeType: 'application/pdf', displayName: filename },
+    });
+    fileUri = uploaded.uri;
+  } catch (err) {
+    sendEvent(requestId, 'fail', { message: `Files API upload failed: ${err.message}` });
+    return null;
+  }
+  sendEvent(requestId, 'stage', { stage: 'extracted', message: 'Upload complete — file URI ready' });
+  sendEvent(requestId, 'extracted_text', { text: `[PDF uploaded to Gemini Files API]\nFile URI: ${fileUri}\n\nGemini reads the PDF directly from its storage. File auto-deletes after 48 hours.`, mode: 'filesapi' });
+  return [{
+    role: 'user',
+    parts: [
+      { fileData: { mimeType: 'application/pdf', fileUri } },
+      { text: 'Extract structured data from this filing.' },
+    ],
+  }];
+}
+
+// ── Single mode — one call with the existing ~7.8k-token prompt ───
+async function runMode_single(filePath, filename, uploadMode, requestId, cfg) {
+  const apiKey = cfg.apiKey || process.env.GEMINI_API_KEY;
+  // Groq is text-only — force text mode.
+  const effectiveUploadMode = cfg.provider === 'groq' ? 'text' : uploadMode;
+  const contents = await prepareContents(filePath, filename, effectiveUploadMode, requestId, apiKey);
+  if (!contents) return;
+
+  const providerLabel = cfg.provider === 'groq' ? 'Groq' : 'Gemini';
+  sendEvent(requestId, 'stage', { stage: 'calling_api', message: `Sending to ${providerLabel}...` });
+
+  const systemText = cfg.systemPromptOverride
+    ? cfg.systemPromptOverride + '\n\n' + SYSTEM_INSTRUCTION
+    : SYSTEM_INSTRUCTION;
+
+  await callProvider(requestId, cfg, contents, systemText, {
+    cacheTag: cfg.systemPromptOverride ? null : 'default',
+    emitDone: true,
+  });
+}
+
+// ── Double mode — Step 1 classifier → Step 2 category extractor ───
+async function runMode_double(filePath, filename, uploadMode, requestId, cfg) {
+  const apiKey = cfg.apiKey || process.env.GEMINI_API_KEY;
+  // Groq is text-only — force text mode.
+  const effectiveUploadMode = cfg.provider === 'groq' ? 'text' : uploadMode;
+  const contents = await prepareContents(filePath, filename, effectiveUploadMode, requestId, apiKey);
+  if (!contents) return;
+
+  let classification;
+
+  if (cfg.preChosenSubcategory) {
+    if (!STEP2_PROMPT_FILES[cfg.preChosenSubcategory]) {
+      sendEvent(requestId, 'fail', {
+        message: `Step 2 extractor not yet built for "${cfg.preChosenSubcategory}". Currently supported: ${Object.keys(STEP2_PROMPT_FILES).map(s => `"${s}"`).join(', ')}. This is a valid smart_subcategory — just no extractor schema written for it yet.`,
+      });
+      return;
+    }
+    classification = {
+      smart_subcategory: cfg.preChosenSubcategory,
+      confidence: 100,
+      rationale: 'User pre-selected subcategory; Step 1 skipped.',
+      secondary_events: [],
+    };
+    sendEvent(requestId, 'classification', { ...classification, userPicked: true });
+  } else {
+    sendEvent(requestId, 'step', { step: 'step1', label: 'Classifying filing' });
+    sendEvent(requestId, 'stage', { stage: 'calling_api', message: 'Step 1: classifying filing...', step: 'step1' });
+
+    const step1Default = loadPrompt('step1_classifier');
+    if (!step1Default && !cfg.step1PromptOverride) {
+      sendEvent(requestId, 'fail', { message: 'Step 1 classifier prompt not found on server.' });
+      return;
+    }
+    const step1Text = cfg.step1PromptOverride || step1Default;
+
+    const s1 = await callProvider(requestId, cfg, contents, step1Text, {
+      stepTag: 'step1',
+      cacheTag: cfg.step1PromptOverride ? null : 'step1',
+      emitDone: false,
+    });
+    if (!s1) return;
+    classification = s1.parsed;
+    sendEvent(requestId, 'classification', classification);
+
+    if (!STEP2_PROMPT_FILES[classification.smart_subcategory]) {
+      sendEvent(requestId, 'fail', {
+        message: `Filing classified as "${classification.smart_subcategory}" (confidence ${classification.confidence}) — this IS a valid smart_subcategory per Step 1, but the Step 2 extractor hasn't been built for it yet. Currently built: ${Object.keys(STEP2_PROMPT_FILES).map(s => `"${s}"`).join(', ')}.`,
+        classification,
+      });
+      return;
+    }
+  }
+
+  const step2Slug = STEP2_PROMPT_FILES[classification.smart_subcategory];
+  const step2Default = loadPrompt(step2Slug);
+  const userOverride = cfg.step2PromptOverrides?.[classification.smart_subcategory];
+  if (!step2Default && !userOverride) {
+    sendEvent(requestId, 'fail', { message: `Step 2 prompt for "${classification.smart_subcategory}" not found on server.` });
+    return;
+  }
+  const step2Text = userOverride || step2Default;
+
+  sendEvent(requestId, 'step', { step: 'step2', label: `Extracting structured data (${classification.smart_subcategory})` });
+  sendEvent(requestId, 'stage', { stage: 'calling_api', message: `Step 2: extracting ${classification.smart_subcategory}...`, step: 'step2' });
+
+  const s2 = await callProvider(requestId, cfg, contents, step2Text, {
+    stepTag: 'step2',
+    cacheTag: userOverride ? null : `step2_${step2Slug}`,
+    emitDone: false,
+  });
+  if (!s2) return;
+
+  const merged = {
+    smart_subcategory: classification.smart_subcategory,
+    _classifier_confidence: classification.confidence,
+    _classifier_rationale: classification.rationale,
+    _secondary_events: classification.secondary_events || [],
+    ...s2.parsed,
+  };
+
+  // Remember enough to power a user-triggered retry call (e.g. "fetch missing standalone BS").
+  setJobMemory(requestId, { contents, cfg });
+
+  sendEvent(requestId, 'done', { result: merged });
+}
+
+// ── POST /retry ─ Targeted re-fetch of a specific missing block ──
+// Body: { requestId, target: 'balance_sheet' | 'cash_flow', scope: 'standalone' | 'consolidated', periodLabel? }
+// Response: { ok: true, target, scope, data: {...} } or { ok: false, error }
+app.post('/retry', async (req, res) => {
+  const { requestId, target, scope, periodLabel } = req.body || {};
+  const mem = jobMemory.get(requestId);
+  if (!mem) return res.status(404).json({ ok: false, error: 'Job expired or not found. Re-run the file.' });
+  if (!['balance_sheet','cash_flow'].includes(target)) return res.status(400).json({ ok: false, error: 'target must be balance_sheet or cash_flow' });
+  if (!['standalone','consolidated'].includes(scope))  return res.status(400).json({ ok: false, error: 'scope must be standalone or consolidated' });
+
+  const { contents, cfg } = mem;
+  const retryId = `${requestId}-retry-${Date.now()}`;
+
+  const blockName = target === 'balance_sheet' ? 'Balance Sheet' : 'Cash Flow Statement';
+  const labelHint = periodLabel ? `The target period is "${periodLabel}".` : '';
+
+  const balanceSheetSchema = `{
+  "${target}": {
+    "period_label": "<FY label>",
+    "as_of_date": "<YYYY-MM-DD>",
+    "scope": "${scope}",
+    "equity_share_capital": <₹ Cr>,
+    "reserves_and_surplus": <₹ Cr>,
+    "total_borrowings": <₹ Cr>,
+    "other_liabilities": <₹ Cr>,
+    "total_liabilities": <₹ Cr>,
+    "borrowings_breakdown": {
+      "long_term_borrowings": <₹ Cr | null>,
+      "short_term_borrowings": <₹ Cr | null>,
+      "lease_liabilities": <₹ Cr | null>,
+      "other_borrowings": <₹ Cr | null>
+    },
+    "other_liabilities_breakdown": {
+      "trade_payables": <₹ Cr | null>,
+      "provisions": <₹ Cr | null>,
+      "deferred_tax_liability": <₹ Cr | null>,
+      "other_current_liabilities": <₹ Cr | null>,
+      "other_non_current_liabilities": <₹ Cr | null>
+    },
+    "fixed_assets_net": <₹ Cr>,
+    "capital_work_in_progress": <₹ Cr>,
+    "investments": <₹ Cr>,
+    "other_assets": <₹ Cr>,
+    "total_assets": <₹ Cr>,
+    "fixed_assets_breakdown": {
+      "land": <₹ Cr | null>,
+      "buildings": <₹ Cr | null>,
+      "plant_and_machinery": <₹ Cr | null>,
+      "equipment": <₹ Cr | null>,
+      "computers": <₹ Cr | null>,
+      "furniture_and_fittings": <₹ Cr | null>,
+      "vehicles": <₹ Cr | null>,
+      "intangible_assets": <₹ Cr | null>,
+      "other_fixed_assets": <₹ Cr | null>
+    },
+    "other_assets_breakdown": {
+      "inventories": <₹ Cr | null>,
+      "trade_receivables": <₹ Cr | null>,
+      "cash_and_equivalents": <₹ Cr | null>,
+      "loans_and_advances": <₹ Cr | null>,
+      "other_current_assets": <₹ Cr | null>,
+      "deferred_tax_asset": <₹ Cr | null>,
+      "goodwill": <₹ Cr | null>
+    },
+    "book_value_per_share": <₹ | null>,
+    "net_debt": <₹ Cr | null>,
+    "debt_to_equity": <ratio | null>
+  }
+}`;
+
+  const cashFlowSchema = `{
+  "${target}": {
+    "period_label": "<FY label>",
+    "scope": "${scope}",
+    "cash_from_operating": <₹ Cr>,
+    "cash_from_investing": <₹ Cr>,
+    "cash_from_financing": <₹ Cr>,
+    "net_cash_flow": <₹ Cr>,
+    "opening_cash_balance": <₹ Cr>,
+    "closing_cash_balance": <₹ Cr>,
+    "operating_breakdown": {
+      "profit_from_operations": <₹ Cr | null>,
+      "change_in_receivables": <₹ Cr | null>,
+      "change_in_inventory": <₹ Cr | null>,
+      "change_in_payables": <₹ Cr | null>,
+      "operating_deposits_change": <₹ Cr | null>,
+      "other_working_capital_items": <₹ Cr | null>,
+      "total_working_capital_changes": <₹ Cr | null>,
+      "direct_taxes_paid": <₹ Cr | null>,
+      "interest_paid_in_operating": <₹ Cr | null>
+    },
+    "investing_breakdown": {
+      "fixed_assets_purchased": <₹ Cr | null>,
+      "fixed_assets_sold": <₹ Cr | null>,
+      "capital_work_in_progress_addition": <₹ Cr | null>,
+      "investments_purchased": <₹ Cr | null>,
+      "investments_sold": <₹ Cr | null>,
+      "interest_received": <₹ Cr | null>,
+      "dividend_received": <₹ Cr | null>,
+      "acquisitions": <₹ Cr | null>,
+      "redemption_or_cancellation_of_shares": <₹ Cr | null>,
+      "other_investing_items": <₹ Cr | null>
+    },
+    "financing_breakdown": {
+      "proceeds_from_share_issue": <₹ Cr | null>,
+      "proceeds_from_borrowings": <₹ Cr | null>,
+      "repayment_of_borrowings": <₹ Cr | null>,
+      "interest_paid_in_financing": <₹ Cr | null>,
+      "dividend_paid": <₹ Cr | null>,
+      "change_in_financial_liabilities": <₹ Cr | null>,
+      "lease_payments": <₹ Cr | null>,
+      "other_financing_items": <₹ Cr | null>
+    },
+    "free_cash_flow": <₹ Cr | null>
+  }
+}`;
+
+  const schema = target === 'balance_sheet' ? balanceSheetSchema : cashFlowSchema;
+
+  const retryPrompt = `You previously processed this Indian stock exchange filing but MISSED the ${scope.toUpperCase()} ${blockName}. It IS in this filing — SEBI LODR Reg 33(3) mandates it for Q2/Q4/H1/FY filings, and Indian filings pair standalone + consolidated statements on adjacent pages.
+
+${labelHint}
+
+Find the ${scope.toUpperCase()} ${blockName} and emit EXACTLY this JSON object, nothing else. No markdown, no code fences, no prose:
+
+${schema}
+
+Rules:
+- scope MUST be "${scope}".
+- All monetary values in ₹ Cr. If the filing uses Lakhs, divide by 100. If Millions, multiply by 0.1.
+- For balance_sheet: total_assets MUST equal total_liabilities (within ₹1 Cr).
+- If the ${scope} ${blockName} genuinely is not in this filing (very rare), emit {"${target}": null} and nothing else.`;
+
+  try {
+    const result = await callProvider(retryId, cfg, contents, retryPrompt, {
+      stepTag: null,
+      cacheTag: null,
+      emitDone: false,
+    });
+    if (!result?.parsed) return res.status(500).json({ ok: false, error: 'Retry returned no parseable result.' });
+    const data = result.parsed[target];
+    return res.json({ ok: true, target, scope, data });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── POST /process ─────────────────────────────────────────────────
+app.post('/process', upload.single('file'), async (req, res) => {
+  const requestId = Date.now().toString() + Math.random().toString(36).slice(2);
+  let cfg = {};
+  try { cfg = JSON.parse(req.body.config || '{}'); } catch {}
+  if (!cfg.apiKey)     cfg.apiKey     = process.env.GEMINI_API_KEY;
+  if (!cfg.groqApiKey) cfg.groqApiKey = process.env.GROQ_API_KEY;
+
+  const provider = cfg.provider || 'gemini';
+  if (provider === 'groq' && !cfg.groqApiKey) return res.status(400).json({ error: 'No Groq API key provided.' });
+  if (provider === 'gemini' && !cfg.apiKey)   return res.status(400).json({ error: 'No Gemini API key provided.' });
+
+  let filePath = req.file?.path;
+  const filename = req.file?.originalname || 'document.pdf';
+  const url = req.body.url;
+
+  if (!filePath && !url) return res.status(400).json({ error: 'No file or URL provided.' });
+
+  clients.set(requestId, { res: null, buffer: [] });
+  res.json({ requestId });
+
+  (async () => {
+    if (url) {
+      sendEvent(requestId, 'stage', { stage: 'downloading', message: 'Downloading PDF from URL...' });
+      filePath = path.join(__dirname, 'uploads', `${requestId}.pdf`);
+      try {
+        await downloadFile(url, filePath);
+        sendEvent(requestId, 'stage', { stage: 'downloading', message: 'Download complete' });
+      } catch (err) {
+        sendEvent(requestId, 'fail', { message: `Download failed: ${err.message}` });
+        return;
+      }
+    }
+
+    const pipeline   = cfg.pipeline || 'single';
+    const uploadMode = cfg.mode     || 'text';
+
+    if (pipeline === 'double') {
+      await runMode_double(filePath, filename, uploadMode, requestId, cfg);
+    } else {
+      await runMode_single(filePath, filename, uploadMode, requestId, cfg);
+    }
+
+    fs.unlink(filePath, () => {});
+  })();
+});
+
+fs.mkdirSync(path.join(__dirname, 'uploads'), { recursive: true });
+fs.mkdirSync(path.join(__dirname, 'public'), { recursive: true });
+
+function getDefaultCfg() {
+  return {
+    apiKey:          process.env.GEMINI_API_KEY || '',
+    model:           process.env.GEMINI_MODEL   || 'gemini-3.1-flash-lite-preview',
+    maxTokens:       parseInt(process.env.GEMINI_MAX_TOKENS, 10) || 32768,
+    thinkingEnabled: process.env.GEMINI_THINKING !== 'false',
+  };
+}
+
+startPoller(app, getDefaultCfg);
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));

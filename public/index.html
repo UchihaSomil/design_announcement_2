@@ -1,0 +1,2372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BSE Filing Extractor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0c0c0e; color: #e2e2e2;
+      height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    /* ── Topbar ── */
+    .topbar {
+      height: 48px; border-bottom: 1px solid #1e1e22; flex-shrink: 0;
+      display: flex; align-items: center; padding: 0 20px; justify-content: space-between;
+    }
+    .topbar-left  { display: flex; align-items: center; gap: 14px; }
+    .topbar-title { font-size: 14px; font-weight: 600; color: #fff; }
+    .topbar-sub   { font-size: 12px; color: #444; }
+
+    /* Pipeline tabs */
+    .pipeline-tabs { display: flex; gap: 2px; background: #18181b; border: 1px solid #2a2a2e; border-radius: 8px; padding: 2px; }
+    .pipeline-tab {
+      padding: 5px 14px; font-size: 12px; font-weight: 600; color: #666;
+      background: transparent; border: none; border-radius: 6px; cursor: pointer; transition: all 0.15s;
+    }
+    .pipeline-tab:hover { color: #aaa; }
+    .pipeline-tab.active { background: #4f46e5; color: #fff; }
+
+    .new-btn {
+      display: flex; align-items: center; gap: 6px;
+      background: transparent; border: 1px solid #2a2a2e; border-radius: 6px;
+      color: #666; font-size: 12px; padding: 5px 12px; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .new-btn:hover { color: #e2e2e2; border-color: #555; }
+
+    /* ── Layout ── */
+    .layout { display: flex; flex: 1; overflow: hidden; }
+
+    /* ══════════════════════════════════════  SIDEBAR  ══════════════════════════════════════ */
+    .sidebar {
+      width: 25%; min-width: 220px; max-width: 290px;
+      border-right: 1px solid #1e1e22; background: #0f0f11;
+      display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0;
+    }
+    .sidebar-header {
+      padding: 14px 16px 10px; font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.8px; color: #444;
+      border-bottom: 1px solid #1e1e22; flex-shrink: 0;
+    }
+    .config-section { padding: 12px 16px; border-bottom: 1px solid #1e1e22; }
+    .config-section-title {
+      font-size: 10px; font-weight: 700; color: #444;
+      text-transform: uppercase; letter-spacing: 0.7px; margin-bottom: 10px;
+    }
+    .config-row { margin-bottom: 10px; }
+    .config-row:last-child { margin-bottom: 0; }
+    .config-label {
+      font-size: 11px; color: #666; margin-bottom: 4px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .hint { font-size: 10px; color: #555; }
+    input[type="text"], input[type="password"], select, textarea {
+      width: 100%; background: #18181b; border: 1px solid #2a2a2e; border-radius: 6px;
+      padding: 7px 10px; font-size: 12px; color: #e2e2e2; outline: none;
+      transition: border-color 0.15s; font-family: inherit;
+    }
+    input:focus, select:focus, textarea:focus { border-color: #4f46e5; }
+    select option, select optgroup { background: #18181b; }
+    textarea { resize: vertical; min-height: 60px; font-size: 11px; line-height: 1.5; }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .toggle-label { font-size: 12px; color: #aaa; }
+    .toggle { position: relative; width: 32px; height: 18px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider { position: absolute; inset: 0; background: #2a2a2e; border-radius: 18px; cursor: pointer; transition: .2s; }
+    .toggle-slider::before { content: ''; position: absolute; width: 12px; height: 12px; left: 3px; bottom: 3px; background: #555; border-radius: 50%; transition: .2s; }
+    .toggle input:checked + .toggle-slider { background: #4f46e5; }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(14px); background: #fff; }
+    input[type="range"] { width: 100%; height: 4px; background: #2a2a2e; border: none; padding: 0; cursor: pointer; accent-color: #4f46e5; }
+    .save-btn {
+      margin: 12px 16px 4px; padding: 9px; background: #4f46e5; border: none; border-radius: 6px;
+      color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; transition: background .15s;
+      width: calc(100% - 32px);
+    }
+    .save-btn:hover { background: #4338ca; }
+    .saved-badge { display: none; text-align: center; font-size: 11px; color: #4ade80; margin-bottom: 10px; }
+
+    .link-btn {
+      background: transparent; border: 1px solid #2a2a2e; border-radius: 6px;
+      color: #818cf8; font-size: 11px; padding: 6px 10px; cursor: pointer; width: 100%;
+      transition: all 0.15s;
+    }
+    .link-btn:hover { border-color: #4f46e5; background: #1a1a2e; }
+
+    /* ══════════════════════════════════════  MAIN PANEL  ══════════════════════════════════════ */
+    .main-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    .mode-section { flex-shrink: 0; padding: 16px 18px 0; border-bottom: 1px solid #1e1e22; }
+    .mode-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+    .mode-card {
+      background: #18181b; border: 1.5px solid #2a2a2e; border-radius: 10px;
+      padding: 14px; cursor: pointer; transition: all 0.15s; position: relative;
+    }
+    .mode-card:hover { border-color: #4f46e555; background: #1c1c22; }
+    .mode-card.selected { border-color: #4f46e5; background: #1a1a2e; }
+    .mode-card.selected::after {
+      content: '✓'; position: absolute; top: 10px; right: 12px;
+      font-size: 11px; color: #4f46e5; font-weight: 700;
+    }
+    .mc-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .mc-icon { font-size: 16px; }
+    .mc-name { font-size: 13px; font-weight: 700; color: #fff; }
+    .mc-tag  {
+      font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 20px;
+      text-transform: uppercase; letter-spacing: 0.4px; margin-left: auto;
+    }
+    .tag-fast { background: #16a34a20; color: #86efac; border: 1px solid #16a34a40; }
+    .tag-rec  { background: #4f46e520; color: #818cf8; border: 1px solid #4f46e540; }
+    .tag-best { background: #d9770620; color: #fdba74; border: 1px solid #d9770640; }
+    .mc-desc { font-size: 11px; color: #666; line-height: 1.5; margin-bottom: 10px; }
+    .mc-input { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid #1e1e22; padding-top: 10px; }
+    .mc-drop {
+      border: 1.5px dashed #2a2a2e; border-radius: 6px; padding: 8px;
+      text-align: center; cursor: pointer; position: relative;
+      font-size: 11px; color: #555; transition: all 0.15s;
+    }
+    .mc-drop:hover { border-color: #4f46e5; background: #1a1a24; }
+    .mc-drop input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+    .mc-fname { font-size: 10px; color: #818cf8; margin-top: 2px; display: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mc-or { font-size: 10px; color: #2a2a2e; text-align: center; }
+    .mc-url {
+      width: 100%; background: #0f0f11; border: 1px solid #2a2a2e; border-radius: 5px;
+      padding: 6px 8px; font-size: 11px; color: #e2e2e2; outline: none; font-family: inherit;
+      transition: border-color .15s;
+    }
+    .mc-url:focus { border-color: #4f46e5; }
+
+    /* Double-mode subcategory row */
+    .double-controls {
+      display: none; align-items: center; gap: 10px;
+      padding: 10px 0 12px; border-top: 1px solid #1e1e22; margin-top: 4px;
+    }
+    .double-controls.visible { display: flex; }
+    .double-label { font-size: 11px; color: #666; white-space: nowrap; }
+    .double-select {
+      flex: 1; background: #18181b; border: 1px solid #2a2a2e; border-radius: 6px;
+      padding: 6px 10px; font-size: 11px; color: #e2e2e2;
+    }
+
+    .extract-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 18px; border-bottom: 1px solid #1e1e22; flex-shrink: 0;
+    }
+    .extract-info { font-size: 12px; color: #555; }
+    .extract-info span { color: #818cf8; }
+    .extract-btn {
+      padding: 9px 24px; background: #4f46e5; border: none; border-radius: 8px;
+      color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; transition: background .15s;
+    }
+    .extract-btn:hover { background: #4338ca; }
+    .extract-btn:disabled { background: #2a2a2e; color: #555; cursor: not-allowed; }
+
+    .output-area {
+      flex: 1; overflow-y: auto; padding: 14px 18px;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .empty-state {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; color: #2a2a2e; gap: 8px; pointer-events: none;
+    }
+    .empty-icon { font-size: 32px; }
+    .empty-text { font-size: 13px; color: #333; }
+
+    /* ══════════════════════════════════════  JOB CARDS  ══════════════════════════════════════ */
+    .job-card { background: #18181b; border: 1px solid #2a2a2e; border-radius: 10px; overflow: hidden; flex-shrink: 0; }
+    .job-header { padding: 10px 14px; border-bottom: 1px solid #2a2a2e; display: flex; align-items: center; gap: 8px; }
+    .job-filename { flex: 1; font-size: 12px; font-weight: 600; color: #aaa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .job-mode-badge { font-size: 10px; padding: 2px 7px; border-radius: 20px; flex-shrink: 0; }
+    .badge-text     { background: #71717a20; color: #a1a1aa; border: 1px solid #71717a40; }
+    .badge-base64   { background: #16a34a20; color: #86efac; border: 1px solid #16a34a40; }
+    .badge-filesapi { background: #4f46e520; color: #818cf8; border: 1px solid #4f46e540; }
+    .badge-pipeline { font-size: 10px; padding: 2px 7px; border-radius: 20px; flex-shrink: 0; background: #4f46e520; color: #818cf8; border: 1px solid #4f46e540; }
+    .job-status { font-size: 11px; padding: 2px 8px; border-radius: 20px; flex-shrink: 0; }
+    .status-queued  { background: #2a2a2e; color: #555; }
+    .status-running { background: #4f46e520; color: #818cf8; border: 1px solid #4f46e540; }
+    .status-done    { background: #16a34a20; color: #86efac; border: 1px solid #16a34a40; }
+    .status-error   { background: #dc262620; color: #fca5a5; border: 1px solid #dc262640; }
+
+    .job-pipeline { padding: 10px 14px; display: flex; flex-direction: column; gap: 4px; border-bottom: 1px solid #1e1e22; }
+    .stage { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #444; padding: 5px 8px; border-radius: 6px; transition: all .2s; }
+    .stage.active { background: #1e1e2e; color: #c7d2fe; }
+    .stage.done   { color: #4ade80; }
+    .stage.error  { color: #fca5a5; }
+    .stage-dot { width: 6px; height: 6px; border-radius: 50%; background: #2a2a2e; flex-shrink: 0; }
+    .stage.active .stage-dot { background: #4f46e5; animation: blink 1s infinite; }
+    .stage.done   .stage-dot { background: #4ade80; }
+    .stage.error  .stage-dot { background: #fca5a5; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+    .stage-label { flex: 1; }
+    .stage-time { font-size: 10px; color: #555; font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
+    .stage-time.live { color: #4f46e5; }
+
+    .step-divider {
+      font-size: 10px; font-weight: 700; color: #818cf8; text-transform: uppercase;
+      letter-spacing: 0.8px; padding: 6px 8px 2px; border-top: 1px dashed #2a2a2e; margin-top: 4px;
+    }
+    .step-divider:first-child { border-top: none; margin-top: 0; }
+
+    .attempt-row { display: flex; align-items: center; gap: 8px; font-size: 10px; color: #555; padding: 3px 8px 3px 22px; }
+    .attempt-row.success { color: #4ade80; }
+    .attempt-row.fail    { color: #fca5a5; }
+    .attempt-row.waiting { color: #818cf8; }
+    .attempt-dot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+
+    .token-bar {
+      margin: 0 14px 8px; padding: 8px 12px; background: #0f0f11;
+      border: 1px solid #1e1e22; border-radius: 6px; display: none; gap: 16px; flex-wrap: wrap;
+    }
+    .token-item { display: flex; flex-direction: column; gap: 2px; }
+    .token-label { font-size: 10px; color: #444; text-transform: uppercase; letter-spacing: 0.5px; }
+    .token-value { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .token-value.input-tok  { color: #818cf8; }
+    .token-value.output-tok { color: #86efac; }
+    .token-value.total-tok  { color: #fdba74; }
+    .token-value.step1-tok  { color: #fb7185; }
+    .token-value.step2-tok  { color: #86efac; }
+    .token-value.savings-tok { color: #4ade80; }
+
+    .stream-preview {
+      margin: 0 14px 8px; background: #0c0c0e; border: 1px solid #1e1e22; border-radius: 6px;
+      padding: 8px 10px; font-family: 'Menlo', monospace; font-size: 10px; color: #4ade80;
+      height: 44px; overflow: hidden; word-break: break-all; line-height: 1.5; display: none;
+    }
+
+    .collapsible-toggle {
+      padding: 7px 14px; cursor: pointer; font-size: 11px; color: #444;
+      display: flex; align-items: center; gap: 5px; border-top: 1px solid #1e1e22; user-select: none;
+    }
+    .collapsible-toggle:hover { color: #777; }
+    .toggle-right { margin-left: auto; font-size: 10px; color: #444; }
+    .collapsible-block { display: none; padding: 0 14px 14px; }
+    .collapsible-block pre {
+      background: #0c0c0e; border: 1px solid #1e1e22; border-radius: 8px; padding: 12px;
+      font-size: 11px; font-family: 'Menlo', monospace;
+      max-height: 320px; overflow-y: auto; overflow-x: auto; white-space: pre; word-break: normal;
+    }
+    .collapsible-block pre.text-pre { color: #888; white-space: pre-wrap; }
+    .collapsible-block pre.json-pre { color: #a3e635; }
+
+    .job-result { display: none; }
+    .result-top { padding: 12px 14px; border-top: 1px solid #2a2a2e; }
+    .result-headline { font-size: 14px; font-weight: 600; color: #fff; line-height: 1.4; margin-bottom: 8px; }
+    .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tag { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; }
+    .tag-cat  { background: #4f46e520; color: #818cf8; border: 1px solid #4f46e540; }
+    .tag-vpos { background: #15803d20; color: #4ade80;  border: 1px solid #15803d40; }
+    .tag-pos  { background: #16a34a20; color: #86efac;  border: 1px solid #16a34a40; }
+    .tag-neu  { background: #71717a20; color: #a1a1aa;  border: 1px solid #71717a40; }
+    .tag-neg  { background: #dc262620; color: #fca5a5;  border: 1px solid #dc262640; }
+    .tag-vneg { background: #9f121220; color: #fca5a5;  border: 1px solid #9f121240; }
+    .result-summary { padding: 10px 14px; font-size: 12px; color: #888; line-height: 1.6; border-top: 1px solid #2a2a2e; }
+    .result-entities { padding: 8px 14px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; border-top: 1px solid #2a2a2e; }
+    .ent-label { font-size: 10px; color: #444; margin-right: 2px; }
+    .ent-chip  { background: #2a2a2e; padding: 2px 8px; border-radius: 20px; color: #777; font-size: 10px; }
+
+    /* ── Classifier card (double mode) ── */
+    .classifier-card {
+      padding: 12px 14px; border-top: 1px solid #2a2a2e;
+      display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    }
+    .conf-chip {
+      font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 20px;
+      font-variant-numeric: tabular-nums;
+    }
+    .conf-hi  { background: #16a34a20; color: #86efac; border: 1px solid #16a34a40; }
+    .conf-mid { background: #4f46e520; color: #818cf8; border: 1px solid #4f46e540; }
+    .conf-lo  { background: #d9770620; color: #fdba74; border: 1px solid #d9770640; }
+    .conf-v-lo { background: #dc262620; color: #fca5a5; border: 1px solid #dc262640; }
+    .rationale-tip {
+      font-size: 11px; color: #666; cursor: help; border-bottom: 1px dotted #444;
+      padding-bottom: 1px; max-width: 560px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .secondary-pill {
+      font-size: 10px; background: #2a2a2e; color: #999; padding: 1px 7px; border-radius: 20px;
+    }
+
+    /* ── Scope toggle + tables ── */
+    .scope-row {
+      padding: 10px 14px; border-top: 1px solid #2a2a2e; display: flex;
+      align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .scope-btns { display: flex; background: #0f0f11; border: 1px solid #2a2a2e; border-radius: 6px; padding: 2px; }
+    .scope-btn {
+      padding: 4px 12px; font-size: 11px; font-weight: 600; color: #666;
+      background: transparent; border: none; border-radius: 4px; cursor: pointer;
+    }
+    .scope-btn:hover { color: #aaa; }
+    .scope-btn.active { background: #4f46e5; color: #fff; }
+    .scope-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .scope-note { font-size: 10px; color: #555; }
+
+    .fin-tables { padding: 6px 14px 14px; display: flex; flex-direction: column; gap: 14px; }
+    .fin-table {
+      border: 1px solid #2a2a2e; border-radius: 8px; overflow: hidden; background: #0f0f11;
+    }
+    .fin-table-head {
+      padding: 8px 12px; background: #16161a; border-bottom: 1px solid #2a2a2e;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .fin-table-title { font-size: 12px; font-weight: 700; color: #e2e2e2; }
+    .fin-table-sub   { font-size: 10px; color: #555; }
+    .fin-table-body  { overflow-x: auto; }
+    .fin-table-body table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .fin-table-body th, .fin-table-body td {
+      padding: 6px 10px; border-bottom: 1px solid #1e1e22; text-align: right;
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .fin-table-body th { color: #777; font-weight: 600; background: #141417; text-align: right; }
+    .fin-table-body th:first-child, .fin-table-body td:first-child { text-align: left; color: #aaa; }
+    .fin-table-body tr:last-child td { border-bottom: none; }
+    .fin-table-body td.num-pos { color: #86efac; }
+    .fin-table-body td.num-neg { color: #fca5a5; }
+    .fin-table-body td.num-na  { color: #444; }
+    .fin-empty { padding: 14px; text-align: center; font-size: 11px; color: #444; }
+
+    .row-parent { cursor: pointer; user-select: none; }
+    .row-parent:hover { background: #151518; }
+    .row-parent td:first-child { font-weight: 600; color: #e2e2e2; }
+    .fin-caret {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 14px; height: 14px; margin-right: 6px; border-radius: 3px;
+      background: #2a2a2e; color: #aaa; font-size: 11px; font-weight: 700;
+      line-height: 1; transition: background 0.15s;
+    }
+    .row-parent:hover .fin-caret { background: #4f46e5; color: #fff; }
+    .row-child td:first-child { color: #888; font-size: 11px; }
+    .row-child { background: #0c0c0f; }
+
+    .insights-wrap { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 8px; }
+    .insights-title { font-size: 11px; font-weight: 700; color: #aaa; text-transform: uppercase; letter-spacing: 0.6px; }
+    .insights-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .insight-card {
+      background: #0f0f11; border: 1px solid #2a2a2e; border-radius: 8px; padding: 10px 12px;
+    }
+    .insight-key { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .insight-val { font-size: 12px; color: #e2e2e2; line-height: 1.5; word-break: break-word; }
+
+    .integrity-flags {
+      padding: 8px 12px; border: 1px solid #d9770640; background: #1f1610;
+      border-radius: 6px; display: flex; flex-direction: column; gap: 4px;
+    }
+    .integrity-flags .flag-title { font-size: 11px; color: #fdba74; font-weight: 700; margin-bottom: 2px; }
+    .integrity-flags .flag-item { font-size: 10px; color: #fca5a5; }
+
+    .retry-bar {
+      padding: 8px 14px; display: flex; flex-wrap: wrap; gap: 8px;
+      border-top: 1px solid #2a2a2e; align-items: center;
+    }
+    .retry-btn {
+      background: #1f1610; border: 1px solid #d9770680; color: #fdba74;
+      padding: 5px 11px; font-size: 11px; border-radius: 6px; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .retry-btn:hover:not(:disabled) { background: #2a1d10; border-color: #d97706; color: #fff; }
+    .retry-btn:disabled { opacity: 0.6; cursor: wait; }
+
+    .extraction-warn {
+      margin: 0 14px 10px; padding: 10px 14px; background: #1f1610;
+      border: 1px solid #d9770680; border-radius: 8px;
+    }
+    .extraction-warn .warn-title { font-size: 12px; font-weight: 700; color: #fdba74; margin-bottom: 4px; }
+    .extraction-warn .warn-body { font-size: 11px; color: #fca5a5; line-height: 1.55; }
+    .extraction-warn ul { margin: 4px 0 0 16px; }
+
+    /* ══════════════════════════════════════  MODAL  ══════════════════════════════════════ */
+    .modal-bg {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100;
+      align-items: center; justify-content: center; padding: 20px;
+    }
+    .modal-bg.visible { display: flex; }
+    .modal {
+      background: #0f0f11; border: 1px solid #2a2a2e; border-radius: 10px;
+      width: min(900px, 100%); max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;
+    }
+    .modal-head { padding: 12px 16px; border-bottom: 1px solid #1e1e22; display: flex; align-items: center; gap: 10px; }
+    .modal-title { font-size: 13px; font-weight: 700; color: #fff; flex: 1; }
+    .modal-close {
+      background: transparent; border: 1px solid #2a2a2e; color: #aaa;
+      border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+    }
+    .modal-close:hover { color: #fff; border-color: #555; }
+    .modal-tabs { display: flex; border-bottom: 1px solid #1e1e22; }
+    .modal-tab {
+      padding: 8px 14px; font-size: 11px; font-weight: 600; color: #666;
+      background: transparent; border: none; border-bottom: 2px solid transparent; cursor: pointer;
+    }
+    .modal-tab:hover { color: #aaa; }
+    .modal-tab.active { color: #fff; border-bottom-color: #4f46e5; }
+    .modal-body { flex: 1; overflow-y: auto; padding: 14px 16px; }
+    .modal-panel { display: none; flex-direction: column; gap: 10px; }
+    .modal-panel.active { display: flex; }
+    .modal-note { font-size: 11px; color: #666; line-height: 1.5; }
+    .modal-note strong { color: #aaa; }
+    .modal-body textarea {
+      min-height: 380px; font-family: 'Menlo', monospace; font-size: 11px; line-height: 1.6;
+    }
+    .modal-footer { padding: 10px 16px; border-top: 1px solid #1e1e22; display: flex; gap: 8px; justify-content: flex-end; }
+    .btn-secondary {
+      background: transparent; border: 1px solid #2a2a2e; color: #aaa;
+      padding: 6px 14px; font-size: 12px; border-radius: 6px; cursor: pointer;
+    }
+    .btn-secondary:hover { color: #fff; border-color: #555; }
+    .btn-primary {
+      background: #4f46e5; border: none; color: #fff;
+      padding: 6px 14px; font-size: 12px; font-weight: 600; border-radius: 6px; cursor: pointer;
+    }
+    .btn-primary:hover { background: #4338ca; }
+  </style>
+</head>
+<body>
+
+<!-- ── Topbar ── -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-title">BSE Filing Extractor</div>
+    <div class="topbar-sub">— powered by Gemini</div>
+    <div class="pipeline-tabs" id="pipelineTabs">
+      <button class="pipeline-tab active" data-pipeline="single" onclick="selectPipeline('single')">Single</button>
+      <button class="pipeline-tab" data-pipeline="double" onclick="selectPipeline('double')">Double</button>
+    </div>
+  </div>
+  <button class="new-btn" onclick="resetInput()">+ New</button>
+</div>
+
+<div class="layout">
+
+  <!-- ══════════════════════════════════════  SIDEBAR  ══════════════════════════════════════ -->
+  <div class="sidebar">
+    <div class="sidebar-header">API Configuration</div>
+
+    <div class="config-section">
+      <div class="config-section-title">Provider</div>
+      <div class="config-row">
+        <div class="config-label">Provider</div>
+        <select id="cfgProvider" onchange="onProviderChange()">
+          <option value="gemini">Gemini</option>
+          <option value="groq">Groq (text-only)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="config-section-title">Authentication</div>
+      <div class="config-row" id="geminiKeyRow">
+        <div class="config-label">Gemini API Key</div>
+        <input type="password" id="cfgApiKey" placeholder="AIza…" />
+      </div>
+      <div class="config-row" id="groqKeyRow" style="display:none">
+        <div class="config-label">Groq API Key</div>
+        <input type="password" id="cfgGroqApiKey" placeholder="gsk_…" />
+      </div>
+    </div>
+
+    <div class="config-section" id="geminiModelSection">
+      <div class="config-section-title">Model</div>
+      <div class="config-row">
+        <div class="config-label">Model ID</div>
+        <select id="cfgModel" onchange="onModelChange()">
+          <optgroup label="Gemini Flash">
+            <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview</option>
+            <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+            <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+            <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+            <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
+          </optgroup>
+          <optgroup label="Gemini Pro">
+            <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+            <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+          </optgroup>
+          <optgroup label="Gemma 3">
+            <option value="gemma-3-27b-it">gemma-3-27b-it</option>
+            <option value="gemma-3-12b-it">gemma-3-12b-it</option>
+            <option value="gemma-3-4b-it">gemma-3-4b-it</option>
+            <option value="gemma-3-1b-it">gemma-3-1b-it</option>
+          </optgroup>
+          <optgroup label="Gemma 3n">
+            <option value="gemma-3n-e4b-it">gemma-3n-e4b-it</option>
+            <option value="gemma-3n-e2b-it">gemma-3n-e2b-it</option>
+          </optgroup>
+          <optgroup label="Gemma 4">
+            <option value="gemma-4-31b-it">gemma-4-31b-it</option>
+          </optgroup>
+        </select>
+      </div>
+      <div id="modelCaps" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px"></div>
+    </div>
+
+    <div class="config-section" id="groqModelSection" style="display:none">
+      <div class="config-section-title">Model</div>
+      <div class="config-row">
+        <div class="config-label">Groq Model</div>
+        <select id="cfgGroqModel">
+          <optgroup label="Llama 3.3 (recommended)">
+            <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
+          </optgroup>
+          <optgroup label="Llama 3.1">
+            <option value="llama-3.1-70b-versatile">llama-3.1-70b-versatile</option>
+            <option value="llama-3.1-8b-instant">llama-3.1-8b-instant</option>
+          </optgroup>
+          <optgroup label="OpenAI GPT-OSS">
+            <option value="openai/gpt-oss-120b">gpt-oss-120b</option>
+            <option value="openai/gpt-oss-20b">gpt-oss-20b</option>
+          </optgroup>
+          <optgroup label="Qwen">
+            <option value="qwen/qwen3-32b">qwen3-32b</option>
+          </optgroup>
+        </select>
+      </div>
+      <div class="hint" style="margin-top:6px; line-height:1.5">Groq is text-only — the PDF's text layer is sent. Use on text-based filings (scanned PDFs won't work).</div>
+    </div>
+
+    <div class="config-section" id="thinkingSection">
+      <div class="config-section-title">Thinking</div>
+      <div class="toggle-row">
+        <div class="toggle-label">Enable thinking</div>
+        <label class="toggle">
+          <input type="checkbox" id="cfgThinkingEnabled" checked onchange="syncThinkingRow()" />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="config-row" id="thinkingLevelRow">
+        <div class="config-label">Level</div>
+        <select id="cfgThinkingLevel">
+          <option value="MINIMAL" selected>MINIMAL</option>
+          <option value="LOW">LOW</option>
+          <option value="MEDIUM">MEDIUM</option>
+          <option value="HIGH">HIGH</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="config-section-title">Response</div>
+      <div class="config-row">
+        <div class="config-label">MIME type</div>
+        <select id="cfgMime">
+          <option value="application/json" selected>application/json</option>
+          <option value="text/plain">text/plain</option>
+        </select>
+      </div>
+      <div class="config-row" id="tempRow">
+        <div class="config-label">Temperature <span class="hint" id="tempHint">0.0</span></div>
+        <input type="range" id="cfgTemp" min="0" max="2" step="0.1" value="0"
+               oninput="document.getElementById('tempHint').textContent=parseFloat(this.value).toFixed(1)" />
+      </div>
+      <div class="config-row">
+        <div class="config-label">Max tokens <span class="hint" id="tokenHint">8,192</span></div>
+        <input type="range" id="cfgTokens" min="256" max="65536" step="256" value="8192"
+               oninput="document.getElementById('tokenHint').textContent=Number(this.value).toLocaleString()" />
+      </div>
+    </div>
+
+    <div class="config-section">
+      <div class="config-section-title">Concurrency</div>
+      <div class="config-row">
+        <div class="config-label">Parallel jobs <span class="hint" id="concurrencyHint">3</span></div>
+        <input type="range" id="cfgConcurrency" min="1" max="10" step="1" value="3"
+               oninput="document.getElementById('concurrencyHint').textContent=this.value" />
+      </div>
+    </div>
+
+    <!-- System prompt — Single-mode textarea OR Double-mode prompt editor link -->
+    <div class="config-section" id="singleSystemPromptSection">
+      <div class="config-section-title">System Prompt</div>
+      <div class="config-row">
+        <div class="config-label">Prefix override <span class="hint">optional</span></div>
+        <textarea id="cfgSystemPrompt" placeholder="Leave blank for default BSE extraction prompt…" rows="3"></textarea>
+      </div>
+    </div>
+
+    <div class="config-section" id="doubleSystemPromptSection" style="display:none">
+      <div class="config-section-title">System Prompts</div>
+      <div class="config-row">
+        <button class="link-btn" onclick="openPromptModal()">✎ View / Edit System Prompts</button>
+        <div class="hint" style="margin-top:6px; line-height:1.5">Open the built-in Step 1 and Step 2 prompts. Creating overrides keeps the defaults intact.</div>
+      </div>
+    </div>
+
+    <button class="save-btn" onclick="saveConfig()">Save Config</button>
+    <div class="saved-badge" id="savedBadge">✓ Saved</div>
+  </div>
+
+  <!-- ══════════════════════════════════════  MAIN PANEL  ══════════════════════════════════════ -->
+  <div class="main-panel">
+
+    <div class="mode-section">
+      <div class="mode-grid">
+
+        <div class="mode-card selected" id="card-text" onclick="selectMode('text')">
+          <div class="mc-top">
+            <div class="mc-icon">📝</div>
+            <div class="mc-name">Text Extraction</div>
+            <span class="mc-tag tag-fast">Fastest</span>
+          </div>
+          <div class="mc-desc">Parses PDF locally, sends extracted text. Good for text-only filings; may lose table structure.</div>
+          <div class="mc-input">
+            <div class="mc-drop" id="drop-text">
+              <input type="file" id="file-text" accept=".pdf" multiple onchange="handleFileSelect('text',this)" onclick="event.stopPropagation()" />
+              📄 Drop or browse PDFs
+              <div class="mc-fname" id="fname-text"></div>
+            </div>
+            <div class="mc-or">— or —</div>
+            <input type="text" class="mc-url" id="url-text" placeholder="https://…/filing.pdf" oninput="handleUrlInput('text')" />
+          </div>
+        </div>
+
+        <div class="mode-card" id="card-base64" onclick="selectMode('base64')">
+          <div class="mc-top">
+            <div class="mc-icon">🔢</div>
+            <div class="mc-name">Base64 Inline</div>
+            <span class="mc-tag tag-rec">Recommended</span>
+          </div>
+          <div class="mc-desc">Sends PDF as base64 inline. Gemini sees the real layout including tables — best for financial results.</div>
+          <div class="mc-input">
+            <div class="mc-drop" id="drop-base64">
+              <input type="file" id="file-base64" accept=".pdf" multiple onchange="handleFileSelect('base64',this)" onclick="event.stopPropagation()" />
+              📄 Drop or browse PDFs
+              <div class="mc-fname" id="fname-base64"></div>
+            </div>
+            <div class="mc-or">— or —</div>
+            <input type="text" class="mc-url" id="url-base64" placeholder="https://…/filing.pdf" oninput="handleUrlInput('base64')" />
+          </div>
+        </div>
+
+        <div class="mode-card" id="card-filesapi" onclick="selectMode('filesapi')">
+          <div class="mc-top">
+            <div class="mc-icon">☁️</div>
+            <div class="mc-name">Gemini Files API</div>
+            <span class="mc-tag tag-best">Best quality</span>
+          </div>
+          <div class="mc-desc">Uploads PDF to Gemini storage (48h cache), calls API with file URI. Best for large or complex filings.</div>
+          <div class="mc-input">
+            <div class="mc-drop" id="drop-filesapi">
+              <input type="file" id="file-filesapi" accept=".pdf" multiple onchange="handleFileSelect('filesapi',this)" onclick="event.stopPropagation()" />
+              📄 Drop or browse PDFs
+              <div class="mc-fname" id="fname-filesapi"></div>
+            </div>
+            <div class="mc-or">— or —</div>
+            <input type="text" class="mc-url" id="url-filesapi" placeholder="https://…/filing.pdf" oninput="handleUrlInput('filesapi')" />
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Subcategory dropdown (only visible in Double mode) -->
+      <div class="double-controls" id="doubleControls">
+        <span class="double-label">Smart Subcategory</span>
+        <select class="double-select" id="subcatSelect" onchange="saveConfig()">
+          <option value="">Auto-classify (run Step 1)</option>
+          <optgroup label="Results & Communications">
+            <option value="Financial Updates">Financial Updates</option>
+            <option value="Concall/Presentation">Concall/Presentation</option>
+          </optgroup>
+          <optgroup label="Capital Actions">
+            <option value="Dividend">Dividend</option>
+            <option value="Buyback">Buyback</option>
+            <option value="Bonus/Stock Split">Bonus/Stock Split</option>
+            <option value="Fund Raising">Fund Raising</option>
+          </optgroup>
+          <optgroup label="Deal Events">
+            <option value="Acquisition">Acquisition</option>
+            <option value="Merger/Demerger">Merger/Demerger</option>
+            <option value="Joint Venture/Strategic Partnership">Joint Venture/Strategic Partnership</option>
+            <option value="Stake Sale/Disinvestment">Stake Sale/Disinvestment</option>
+            <option value="Open Offer/Takeover">Open Offer/Takeover</option>
+          </optgroup>
+          <optgroup label="Business Events">
+            <option value="Order Win">Order Win</option>
+            <option value="Capacity Expansion/Capex">Capacity Expansion/Capex</option>
+            <option value="Product Launch">Product Launch</option>
+            <option value="Operational Disruption">Operational Disruption</option>
+          </optgroup>
+          <optgroup label="People & Governance">
+            <option value="Change in Key Management">Change in Key Management</option>
+            <option value="Promoter Buy/Sell">Promoter Buy/Sell</option>
+          </optgroup>
+          <optgroup label="Regulatory & Credit">
+            <option value="Credit Rating Change">Credit Rating Change</option>
+            <option value="Regulatory Approval/Licensing">Regulatory Approval/Licensing</option>
+            <option value="Regulatory Action/Penalty">Regulatory Action/Penalty</option>
+            <option value="Fraud/Default">Fraud/Default</option>
+            <option value="Insolvency/CIRP">Insolvency/CIRP</option>
+          </optgroup>
+          <optgroup label="Catch-all">
+            <option value="Others">Others</option>
+            <option value="Routine/Administrative">Routine/Administrative</option>
+          </optgroup>
+        </select>
+      </div>
+    </div>
+
+    <div class="extract-bar">
+      <div class="extract-info" id="extractInfo">Select a mode and add a file or URL.</div>
+      <button class="extract-btn" id="extractBtn" disabled onclick="submitJobs()">Extract →</button>
+    </div>
+
+    <div class="output-area" id="outputArea">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">🔍</div>
+        <div class="empty-text">Results will appear here</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════  PROMPT MODAL  ══════════════════════════════════════ -->
+<div class="modal-bg" id="promptModal" onclick="if(event.target===this) closePromptModal()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">System Prompts — Double Mode</div>
+      <button class="modal-close" onclick="closePromptModal()">Close</button>
+    </div>
+    <div class="modal-tabs">
+      <button class="modal-tab active" data-panel="step1" onclick="switchPromptTab('step1')">Step 1 — Classifier</button>
+      <button class="modal-tab" data-panel="step2" onclick="switchPromptTab('step2')">Step 2 — Financial Updates</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-panel active" id="panel-step1">
+        <div class="modal-note">
+          <strong>Default prompt (read-only).</strong> To customize, click <strong>Create override</strong> and edit below. Your override is saved locally and applied on the next run. The default .md file on the server is never touched.
+        </div>
+        <textarea id="step1PromptBox" readonly></textarea>
+        <div style="display:flex;gap:8px">
+          <button class="btn-secondary" id="step1CreateBtn" onclick="enablePromptEdit('step1')">Create override</button>
+          <button class="btn-secondary" id="step1ResetBtn" style="display:none" onclick="resetPromptOverride('step1')">Reset to default</button>
+          <span id="step1OverrideBadge" style="display:none; font-size:10px; color:#fdba74; align-self:center">Override active</span>
+        </div>
+      </div>
+      <div class="modal-panel" id="panel-step2">
+        <div class="modal-note">
+          <strong>Default prompt (read-only).</strong> To customize, click <strong>Create override</strong> and edit below. Your override is saved locally per category.
+        </div>
+        <textarea id="step2PromptBox" readonly></textarea>
+        <div style="display:flex;gap:8px">
+          <button class="btn-secondary" id="step2CreateBtn" onclick="enablePromptEdit('step2')">Create override</button>
+          <button class="btn-secondary" id="step2ResetBtn" style="display:none" onclick="resetPromptOverride('step2')">Reset to default</button>
+          <span id="step2OverrideBadge" style="display:none; font-size:10px; color:#fdba74; align-self:center">Override active</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closePromptModal()">Cancel</button>
+      <button class="btn-primary" onclick="savePromptOverrides()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+//  CONFIG
+// ══════════════════════════════════════════════════════════════════
+const STORAGE_KEY = 'bse_extractor_config';
+const DEFAULTS = {
+  provider: 'gemini',
+  apiKey: '', model: 'gemini-3.1-flash-lite-preview',
+  groqApiKey: '', groqModel: 'llama-3.3-70b-versatile',
+  thinkingEnabled: true, thinkingLevel: 'MINIMAL',
+  mime: 'application/json', temperature: 0, maxTokens: 32768,
+  concurrency: 3, systemPromptOverride: '', mode: 'text',
+  pipeline: 'single',
+  preChosenSubcategory: '',
+  step1PromptOverride: '',
+  step2PromptOverrides: {},
+};
+let config = { ...DEFAULTS };
+
+function loadConfig() {
+  try { config = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') }; }
+  catch { config = { ...DEFAULTS }; }
+  config.step2PromptOverrides = config.step2PromptOverrides || {};
+  document.getElementById('cfgProvider').value           = config.provider || 'gemini';
+  document.getElementById('cfgApiKey').value             = config.apiKey;
+  document.getElementById('cfgGroqApiKey').value         = config.groqApiKey || '';
+  document.getElementById('cfgGroqModel').value          = config.groqModel || 'llama-3.3-70b-versatile';
+  document.getElementById('cfgModel').value              = config.model;
+  document.getElementById('cfgThinkingEnabled').checked  = config.thinkingEnabled;
+  document.getElementById('cfgThinkingLevel').value      = config.thinkingLevel;
+  document.getElementById('cfgMime').value               = config.mime;
+  document.getElementById('cfgTemp').value               = config.temperature;
+  document.getElementById('tempHint').textContent        = parseFloat(config.temperature).toFixed(1);
+  document.getElementById('cfgTokens').value             = config.maxTokens;
+  document.getElementById('tokenHint').textContent       = Number(config.maxTokens).toLocaleString();
+  document.getElementById('cfgConcurrency').value        = config.concurrency;
+  document.getElementById('concurrencyHint').textContent = config.concurrency;
+  document.getElementById('cfgSystemPrompt').value       = config.systemPromptOverride;
+  document.getElementById('subcatSelect').value          = config.preChosenSubcategory || '';
+  syncThinkingRow();
+}
+
+function saveConfig() {
+  config = {
+    provider: document.getElementById('cfgProvider').value,
+    apiKey: document.getElementById('cfgApiKey').value.trim(),
+    groqApiKey: document.getElementById('cfgGroqApiKey').value.trim(),
+    groqModel: document.getElementById('cfgGroqModel').value,
+    model: document.getElementById('cfgModel').value,
+    thinkingEnabled: document.getElementById('cfgThinkingEnabled').checked,
+    thinkingLevel: document.getElementById('cfgThinkingLevel').value,
+    mime: document.getElementById('cfgMime').value,
+    temperature: parseFloat(document.getElementById('cfgTemp').value),
+    maxTokens: parseInt(document.getElementById('cfgTokens').value),
+    concurrency: parseInt(document.getElementById('cfgConcurrency').value),
+    systemPromptOverride: document.getElementById('cfgSystemPrompt').value.trim(),
+    mode: selectedMode,
+    pipeline: selectedPipeline,
+    preChosenSubcategory: document.getElementById('subcatSelect').value,
+    step1PromptOverride: config.step1PromptOverride || '',
+    step2PromptOverrides: config.step2PromptOverrides || {},
+  };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  const b = document.getElementById('savedBadge');
+  b.style.display = 'block';
+  setTimeout(() => b.style.display = 'none', 1800);
+}
+
+function syncThinkingRow() {
+  const checked = document.getElementById('cfgThinkingEnabled').checked;
+  const row = document.getElementById('thinkingLevelRow');
+  row.style.opacity = checked ? '1' : '0.3';
+  row.style.pointerEvents = checked ? '' : 'none';
+}
+
+function onProviderChange() {
+  const p = document.getElementById('cfgProvider').value;
+  const isGroq = p === 'groq';
+  document.getElementById('geminiKeyRow').style.display      = isGroq ? 'none' : '';
+  document.getElementById('groqKeyRow').style.display        = isGroq ? '' : 'none';
+  document.getElementById('geminiModelSection').style.display = isGroq ? 'none' : '';
+  document.getElementById('groqModelSection').style.display   = isGroq ? '' : 'none';
+  document.getElementById('thinkingSection').style.display   = isGroq ? 'none' : '';
+
+  // Groq is text-only — disable Base64 and Files API cards.
+  ['base64', 'filesapi'].forEach(m => {
+    const card = document.getElementById(`card-${m}`);
+    if (!card) return;
+    if (isGroq) {
+      card.style.opacity = '0.35';
+      card.style.pointerEvents = 'none';
+      card.title = 'Groq is text-only — use Text Extraction mode.';
+    } else {
+      card.style.opacity = '';
+      card.style.pointerEvents = '';
+      card.title = '';
+    }
+  });
+  if (isGroq && selectedMode !== 'text') selectMode('text');
+}
+
+const MODEL_CAPS = {
+  'gemini-3.1-flash-lite-preview': { thinking: true,  tempLocked: true,  json: true,  maxTokens: 65536, notes: ['Free tier', 'Thinking'] },
+  'gemini-3-flash-preview':        { thinking: true,  tempLocked: true,  json: true,  maxTokens: 65536, notes: ['Preview', 'Thinking'] },
+  'gemini-2.5-flash':              { thinking: true,  tempLocked: true,  json: true,  maxTokens: 65536, notes: ['Thinking'] },
+  'gemini-2.0-flash':              { thinking: false, tempLocked: false, json: true,  maxTokens: 65536,  notes: ['Fast'] },
+  'gemini-2.0-flash-lite':         { thinking: false, tempLocked: false, json: true,  maxTokens: 65536,  notes: ['Fastest'] },
+  'gemini-2.5-pro':                { thinking: true,  tempLocked: true,  json: true,  maxTokens: 65536, notes: ['Pro', 'Thinking'] },
+  'gemini-3.1-pro-preview':        { thinking: true,  tempLocked: true,  json: true,  maxTokens: 65536, notes: ['Pro', 'Thinking'] },
+  'gemma-3-27b-it':                { thinking: false, tempLocked: false, json: false, maxTokens: 8192,  notes: ['Gemma 3', '27B', 'No JSON'] },
+  'gemma-3-12b-it':                { thinking: false, tempLocked: false, json: false, maxTokens: 8192,  notes: ['Gemma 3', '12B', 'No JSON'] },
+  'gemma-3-4b-it':                 { thinking: false, tempLocked: false, json: false, maxTokens: 8192,  notes: ['Gemma 3', '4B',  'No JSON'] },
+  'gemma-3-1b-it':                 { thinking: false, tempLocked: false, json: false, maxTokens: 8192,  notes: ['Gemma 3', '1B',  'No JSON'] },
+  'gemma-3n-e4b-it':               { thinking: false, tempLocked: false, json: false, maxTokens: 8192,  notes: ['Gemma 3n', 'E4B','No JSON'] },
+  'gemma-3n-e2b-it':               { thinking: false, tempLocked: false, json: false, maxTokens: 8192,  notes: ['Gemma 3n', 'E2B','No JSON'] },
+  'gemma-4-31b-it':                { thinking: false, tempLocked: false, json: false, maxTokens: 8192,  notes: ['Gemma 4', '31B', 'No JSON'] },
+};
+
+function onModelChange() {
+  const model = document.getElementById('cfgModel').value;
+  const caps  = MODEL_CAPS[model] || { thinking: false, tempLocked: false, json: true, maxTokens: 8192, notes: [] };
+
+  const ts = document.getElementById('thinkingSection');
+  ts.style.opacity = caps.thinking ? '1' : '0.4';
+  ts.style.pointerEvents = caps.thinking ? '' : 'none';
+  if (!caps.thinking) document.getElementById('cfgThinkingEnabled').checked = false;
+
+  const tempRow = document.getElementById('tempRow');
+  if (caps.tempLocked) {
+    tempRow.style.opacity = '0.4'; tempRow.style.pointerEvents = 'none';
+    document.getElementById('tempHint').textContent = 'locked (1.0)';
+  } else {
+    tempRow.style.opacity = '1'; tempRow.style.pointerEvents = '';
+    document.getElementById('tempHint').textContent = parseFloat(document.getElementById('cfgTemp').value).toFixed(1);
+  }
+
+  const mimeSelect = document.getElementById('cfgMime');
+  if (!caps.json) {
+    mimeSelect.value = 'text/plain';
+    mimeSelect.style.opacity = '0.4'; mimeSelect.style.pointerEvents = 'none';
+  } else {
+    mimeSelect.style.opacity = '1'; mimeSelect.style.pointerEvents = '';
+  }
+
+  const tokSlider = document.getElementById('cfgTokens');
+  tokSlider.max = caps.maxTokens;
+  if (parseInt(tokSlider.value) > caps.maxTokens) {
+    tokSlider.value = caps.maxTokens;
+    document.getElementById('tokenHint').textContent = caps.maxTokens.toLocaleString();
+  }
+
+  document.getElementById('modelCaps').innerHTML = caps.notes.map(n =>
+    `<span style="font-size:10px;padding:2px 7px;border-radius:20px;background:#2a2a2e;color:#777;border:1px solid #333">${n}</span>`
+  ).join('');
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  PIPELINE & MODE
+// ══════════════════════════════════════════════════════════════════
+let selectedMode = 'text';
+let selectedPipeline = 'single';
+const modeFiles = { text: [], base64: [], filesapi: [] };
+const modeUrls  = { text: '', base64: '', filesapi: '' };
+const modeLabels = { text: '📝 Text Extraction', base64: '🔢 Base64 Inline', filesapi: '☁️ Files API' };
+const modeBadgeCls = { text: 'badge-text', base64: 'badge-base64', filesapi: 'badge-filesapi' };
+
+function selectPipeline(p) {
+  selectedPipeline = p;
+  document.querySelectorAll('.pipeline-tab').forEach(el =>
+    el.classList.toggle('active', el.dataset.pipeline === p));
+  document.getElementById('doubleControls').classList.toggle('visible', p === 'double');
+  document.getElementById('singleSystemPromptSection').style.display = p === 'single' ? '' : 'none';
+  document.getElementById('doubleSystemPromptSection').style.display = p === 'double' ? '' : 'none';
+  saveConfig();
+}
+
+function selectMode(mode) {
+  selectedMode = mode;
+  ['text','base64','filesapi'].forEach(m =>
+    document.getElementById(`card-${m}`).classList.toggle('selected', m === mode)
+  );
+  updateExtractBar();
+}
+
+function handleFileSelect(mode, input) {
+  modeFiles[mode] = Array.from(input.files);
+  const fn = document.getElementById(`fname-${mode}`);
+  fn.textContent = modeFiles[mode].length === 1
+    ? modeFiles[mode][0].name
+    : `${modeFiles[mode].length} files selected`;
+  fn.style.display = 'block';
+  document.getElementById(`url-${mode}`).value = '';
+  modeUrls[mode] = '';
+  updateExtractBar();
+}
+
+function handleUrlInput(mode) {
+  modeUrls[mode] = document.getElementById(`url-${mode}`).value.trim();
+  if (modeUrls[mode]) { modeFiles[mode] = []; document.getElementById(`fname-${mode}`).style.display = 'none'; }
+  updateExtractBar();
+}
+
+function updateExtractBar() {
+  const info = document.getElementById('extractInfo');
+  const btn  = document.getElementById('extractBtn');
+  const hasFile = modeFiles[selectedMode].length > 0;
+  const hasUrl  = modeUrls[selectedMode].length > 0;
+  if (!hasFile && !hasUrl) {
+    info.innerHTML = `Pipeline: <span>${selectedPipeline}</span> · Mode: <span>${modeLabels[selectedMode]}</span> — add a file or URL.`;
+    btn.disabled = true;
+  } else {
+    const src = hasFile ? `${modeFiles[selectedMode].length} file(s) ready` : 'URL ready';
+    info.innerHTML = `<span>${selectedPipeline}</span> · <span>${modeLabels[selectedMode]}</span> · ${src}`;
+    btn.disabled = false;
+  }
+}
+
+function resetInput() {
+  ['text','base64','filesapi'].forEach(m => {
+    modeFiles[m] = [];
+    modeUrls[m] = '';
+    document.getElementById(`url-${m}`).value = '';
+    document.getElementById(`fname-${m}`).style.display = 'none';
+    document.getElementById(`file-${m}`).value = '';
+  });
+  updateExtractBar();
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  PROMPT MODAL
+// ══════════════════════════════════════════════════════════════════
+const promptDefaults = { step1: null, step2: null };
+const promptDefaultFiles = { step1: 'step1_classifier', step2: 'step2_financial_updates' };
+let currentPromptTab = 'step1';
+
+async function openPromptModal() {
+  document.getElementById('promptModal').classList.add('visible');
+  await loadPromptDefault('step1');
+  await loadPromptDefault('step2');
+  hydratePromptPanel('step1');
+  hydratePromptPanel('step2');
+}
+function closePromptModal() { document.getElementById('promptModal').classList.remove('visible'); }
+
+function switchPromptTab(t) {
+  currentPromptTab = t;
+  document.querySelectorAll('.modal-tab').forEach(el => el.classList.toggle('active', el.dataset.panel === t));
+  document.querySelectorAll('.modal-panel').forEach(el => el.classList.toggle('active', el.id === `panel-${t}`));
+}
+
+async function loadPromptDefault(tab) {
+  if (promptDefaults[tab] != null) return;
+  try {
+    const r = await fetch(`/prompts/${promptDefaultFiles[tab]}`);
+    promptDefaults[tab] = r.ok ? await r.text() : '(prompt file missing on server)';
+  } catch (e) {
+    promptDefaults[tab] = '(failed to load prompt)';
+  }
+}
+
+function getOverride(tab) {
+  if (tab === 'step1') return config.step1PromptOverride || '';
+  return config.step2PromptOverrides?.['Financial Updates'] || '';
+}
+function setOverride(tab, value) {
+  if (tab === 'step1') config.step1PromptOverride = value;
+  else {
+    config.step2PromptOverrides = config.step2PromptOverrides || {};
+    config.step2PromptOverrides['Financial Updates'] = value;
+  }
+}
+
+function hydratePromptPanel(tab) {
+  const box = document.getElementById(`${tab}PromptBox`);
+  const override = getOverride(tab);
+  const hasOverride = !!override;
+  box.value = hasOverride ? override : (promptDefaults[tab] || '');
+  box.readOnly = !hasOverride;
+  document.getElementById(`${tab}CreateBtn`).style.display = hasOverride ? 'none' : '';
+  document.getElementById(`${tab}ResetBtn`).style.display = hasOverride ? '' : 'none';
+  document.getElementById(`${tab}OverrideBadge`).style.display = hasOverride ? '' : 'none';
+}
+
+function enablePromptEdit(tab) {
+  const box = document.getElementById(`${tab}PromptBox`);
+  box.readOnly = false;
+  box.value = promptDefaults[tab] || '';
+  document.getElementById(`${tab}CreateBtn`).style.display = 'none';
+  document.getElementById(`${tab}ResetBtn`).style.display = '';
+  document.getElementById(`${tab}OverrideBadge`).style.display = '';
+  box.focus();
+}
+function resetPromptOverride(tab) {
+  setOverride(tab, '');
+  hydratePromptPanel(tab);
+}
+function savePromptOverrides() {
+  const s1 = document.getElementById('step1PromptBox');
+  const s2 = document.getElementById('step2PromptBox');
+  if (!s1.readOnly && s1.value.trim()) setOverride('step1', s1.value);
+  if (!s2.readOnly && s2.value.trim()) setOverride('step2', s2.value);
+  saveConfig();
+  closePromptModal();
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  QUEUE
+// ══════════════════════════════════════════════════════════════════
+let queue = [], running = 0;
+function enqueue(items) { items.forEach(i => queue.push(i)); drainQueue(); }
+function drainQueue() {
+  while (running < config.concurrency && queue.length > 0) {
+    const item = queue.shift(); running++;
+    processItem(item).finally(() => { running--; drainQueue(); });
+  }
+}
+
+async function submitJobs() {
+  saveConfig();
+  if (config.provider === 'groq') {
+    if (!config.groqApiKey) { alert('Enter your Groq API key in the config panel and click Save.'); return; }
+  } else {
+    if (!config.apiKey) { alert('Enter your Gemini API key in the config panel and click Save.'); return; }
+  }
+
+  const files = modeFiles[selectedMode];
+  const url   = modeUrls[selectedMode];
+  if (!files.length && !url) { alert('Add a PDF or URL first.'); return; }
+
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('extractBtn').disabled = true;
+
+  const items = files.length
+    ? files.map(f => ({ file: f, label: f.name }))
+    : [{ url, label: url.split('/').pop() || 'document.pdf' }];
+
+  for (const item of items) item.cardId = createJobCard(item.label, selectedMode, selectedPipeline);
+  enqueue(items);
+
+  resetInput();
+  document.getElementById('extractBtn').disabled = false;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  JOB CARD
+// ══════════════════════════════════════════════════════════════════
+const stageOrder = ['downloading','extracting','extracted','calling_api','parsing'];
+const stageLabels = {
+  downloading: 'Downloading from URL',
+  extracting:  'Preparing PDF',
+  extracted:   'PDF ready',
+  calling_api: 'Calling Gemini API',
+  parsing:     'Parsing JSON response',
+};
+
+function createJobCard(label, mode, pipeline) {
+  const id = 'job-' + Date.now() + '-' + Math.random().toString(36).slice(2,7);
+  const modeLbl = { text:'Text', base64:'Base64', filesapi:'Files API' }[mode] || mode;
+  const pipelineLbl = pipeline === 'double' ? 'Double' : 'Single';
+  const el = document.createElement('div');
+  el.className = 'job-card'; el.id = id;
+  el.innerHTML = `
+    <div class="job-header">
+      <div class="job-filename">${label}</div>
+      <span class="badge-pipeline">${pipelineLbl}</span>
+      <span class="job-mode-badge ${modeBadgeCls[mode]}">${modeLbl}</span>
+      <span class="job-status status-queued" id="${id}-status">Queued</span>
+    </div>
+    <div class="job-pipeline" id="${id}-pipeline" style="display:none">
+      ${stageOrder.map(s => `
+        <div class="stage" id="${id}-s-${s}">
+          <div class="stage-dot"></div>
+          <div class="stage-label">${stageLabels[s]}</div>
+          <div class="stage-time" id="${id}-t-${s}"></div>
+        </div>`).join('')}
+    </div>
+    <div class="token-bar" id="${id}-tokens"></div>
+    <div class="stream-preview" id="${id}-stream"></div>
+    <div class="collapsible-toggle" id="${id}-text-toggle" style="display:none" onclick="toggleBlock('${id}-text-block','${id}-text-arrow')">
+      <span id="${id}-text-arrow">▶</span> Extracted / prepared text
+      <span class="toggle-right" id="${id}-text-chars"></span>
+    </div>
+    <div class="collapsible-block" id="${id}-text-block"><pre class="text-pre" id="${id}-text-pre"></pre></div>
+    <div class="job-result" id="${id}-result">
+      <div class="classifier-card" id="${id}-classifier" style="display:none"></div>
+      <div class="result-top">
+        <div class="result-headline" id="${id}-headline"></div>
+        <div class="tags" id="${id}-tags"></div>
+      </div>
+      <div class="result-summary" id="${id}-summary"></div>
+      <div class="result-entities" id="${id}-entities"></div>
+      <div class="scope-row" id="${id}-scope-row" style="display:none">
+        <span class="double-label">View:</span>
+        <div class="scope-btns" id="${id}-scope-btns"></div>
+        <span class="scope-note" id="${id}-scope-note"></span>
+      </div>
+      <div class="retry-bar" id="${id}-retry-bar" style="display:none"></div>
+      <div class="fin-tables" id="${id}-fin-tables"></div>
+      <div class="insights-wrap" id="${id}-insights"></div>
+      <div class="collapsible-toggle" onclick="toggleBlock('${id}-json-block','${id}-json-arrow')">
+        <span id="${id}-json-arrow">▶</span> Full JSON response
+      </div>
+      <div class="collapsible-block" id="${id}-json-block"><pre class="json-pre" id="${id}-json-pre"></pre></div>
+    </div>`;
+  document.getElementById('outputArea').prepend(el);
+  return id;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  STAGE + TOKEN EVENTS
+// ══════════════════════════════════════════════════════════════════
+const stageTimers = {}, liveIntervals = {};
+function fmtMs(ms) { return ms < 1000 ? `${ms}ms` : `${(ms/1000).toFixed(1)}s`; }
+
+function setStage(cardId, stageId, state, msg) {
+  const el  = document.getElementById(`${cardId}-s-${stageId}`);
+  const tel = document.getElementById(`${cardId}-t-${stageId}`);
+  if (!el) return;
+  el.className = `stage ${state}`;
+  const key = `${cardId}-${stageId}`;
+  if (state === 'active') {
+    stageTimers[key] = Date.now();
+    if (liveIntervals[key]) clearInterval(liveIntervals[key]);
+    if (tel) { tel.className = 'stage-time live'; liveIntervals[key] = setInterval(() => tel.textContent = fmtMs(Date.now() - stageTimers[key]), 100); }
+  } else if ((state === 'done' || state === 'error') && stageTimers[key]) {
+    if (liveIntervals[key]) { clearInterval(liveIntervals[key]); delete liveIntervals[key]; }
+    if (tel) { tel.className = 'stage-time'; tel.textContent = fmtMs(Date.now() - stageTimers[key]); }
+  }
+  if (msg) el.querySelector('.stage-label').textContent = msg;
+}
+
+function setJobStatus(id, state, label) {
+  const el = document.getElementById(`${id}-status`);
+  if (el) { el.className = `job-status status-${state}`; el.textContent = label; }
+}
+
+function addAttemptRow(cardId, html, cls) {
+  const pipeline = document.getElementById(`${cardId}-pipeline`);
+  if (!pipeline) return;
+  const row = document.createElement('div');
+  row.className = `attempt-row ${cls}`;
+  row.innerHTML = `<div class="attempt-dot"></div>${html}`;
+  pipeline.appendChild(row);
+}
+
+function addStepDivider(cardId, label) {
+  const pipeline = document.getElementById(`${cardId}-pipeline`);
+  if (!pipeline) return;
+  const div = document.createElement('div');
+  div.className = 'step-divider';
+  div.textContent = label;
+  pipeline.appendChild(div);
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  PROCESS ITEM
+// ══════════════════════════════════════════════════════════════════
+async function processItem({ file, url, cardId }) {
+  document.getElementById(`${cardId}-pipeline`).style.display = 'flex';
+  setJobStatus(cardId, 'running', 'Running');
+  if (!url) setStage(cardId, 'downloading', 'done', 'File ready (local upload)');
+
+  const formData = new FormData();
+  formData.append('config', JSON.stringify(config));
+  if (file) formData.append('file', file);
+  else formData.append('url', url);
+
+  let requestId;
+  try {
+    const r = await fetch('/process', { method: 'POST', body: formData });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    requestId = d.requestId;
+    cardRequestId[cardId] = requestId;
+  } catch (err) {
+    setJobStatus(cardId, 'error', 'Error');
+    setStage(cardId, 'downloading', 'error', err.message);
+    return;
+  }
+
+  const tokenTotals = { step1: null, step2: null, single: null };
+
+  await new Promise(resolve => {
+    const es = new EventSource(`/stream/${requestId}`);
+
+    es.addEventListener('step', e => {
+      const { step, label } = JSON.parse(e.data);
+      addStepDivider(cardId, `${step === 'step1' ? '① Step 1' : '② Step 2'} — ${label}`);
+      stageOrder.forEach(s => {
+        const el = document.getElementById(`${cardId}-s-${s}`);
+        if (el) { el.className = 'stage'; el.querySelector('.stage-label').textContent = stageLabels[s]; }
+        const tel = document.getElementById(`${cardId}-t-${s}`);
+        if (tel) tel.textContent = '';
+      });
+    });
+
+    es.addEventListener('stage', e => {
+      const { stage, message } = JSON.parse(e.data);
+      const idx = stageOrder.indexOf(stage);
+      stageOrder.slice(0, idx).forEach(s => {
+        if (!document.getElementById(`${cardId}-s-${s}`)?.classList.contains('done'))
+          setStage(cardId, s, 'done');
+      });
+      setStage(cardId, stage, 'active', message);
+      if (stage === 'calling_api') document.getElementById(`${cardId}-stream`).style.display = 'block';
+    });
+
+    es.addEventListener('cache', e => {
+      const { hit, cacheName, step } = JSON.parse(e.data);
+      const prefix = step ? `[${step}] ` : '';
+      const row = document.createElement('div');
+      row.className = `attempt-row ${hit ? 'success' : 'waiting'}`;
+      row.innerHTML = `<div class="attempt-dot"></div><span style="flex:1">${prefix}${
+        hit ? `✓ Using cached system prompt (${cacheName?.split('/').pop()})` : '↩ Cache unavailable — inline system prompt'
+      }</span>`;
+      document.getElementById(`${cardId}-pipeline`).appendChild(row);
+    });
+
+    es.addEventListener('attempt', e => {
+      const { attempt, total, step } = JSON.parse(e.data);
+      const prefix = step ? `[${step}] ` : '';
+      setStage(cardId, 'calling_api', 'active', `${prefix}Calling Gemini — attempt ${attempt}/${total}`);
+    });
+
+    es.addEventListener('attempt_done', e => {
+      const { attempt, ms, success, error, step } = JSON.parse(e.data);
+      const prefix = step ? `[${step}] ` : '';
+      const lbl = success
+        ? `${prefix}Attempt ${attempt} succeeded in ${fmtMs(ms)}`
+        : `${prefix}Attempt ${attempt} failed after ${fmtMs(ms)}${error ? ' — ' + error.slice(0,80) : ''}`;
+      addAttemptRow(cardId, `<span style="flex:1">${lbl}</span>`, success ? 'success' : 'fail');
+    });
+
+    es.addEventListener('retry', e => {
+      const { nextAttempt, total, waitSecs, step } = JSON.parse(e.data);
+      const prefix = step ? `[${step}] ` : '';
+      addAttemptRow(cardId, `<span style="flex:1">${prefix}Waiting ${waitSecs}s → attempt ${nextAttempt}/${total}…</span>`, 'waiting');
+    });
+
+    es.addEventListener('tokens', e => {
+      const { input, output, total, step } = JSON.parse(e.data);
+      const key = step || 'single';
+      tokenTotals[key] = { input, output, total };
+      renderTokens(cardId, tokenTotals);
+    });
+
+    es.addEventListener('extracted_text', e => {
+      const { text } = JSON.parse(e.data);
+      const pre    = document.getElementById(`${cardId}-text-pre`);
+      const chars  = document.getElementById(`${cardId}-text-chars`);
+      const toggle = document.getElementById(`${cardId}-text-toggle`);
+      if (pre) pre.textContent = text;
+      if (chars) chars.textContent = `${text.length.toLocaleString()} chars`;
+      if (toggle) toggle.style.display = 'flex';
+    });
+
+    es.addEventListener('chunk', e => {
+      document.getElementById(`${cardId}-stream`).textContent = JSON.parse(e.data).partial;
+    });
+
+    es.addEventListener('classification', e => {
+      renderClassifierCard(cardId, JSON.parse(e.data));
+    });
+
+    es.addEventListener('done', e => {
+      const { result } = JSON.parse(e.data);
+      stageOrder.forEach(s => setStage(cardId, s, 'done'));
+      es.close();
+      document.getElementById(`${cardId}-stream`).style.display = 'none';
+      showResult(cardId, result);
+      setJobStatus(cardId, 'done', 'Done');
+      resolve();
+    });
+
+    es.addEventListener('fail', e => {
+      let failPayload = {};
+      try { failPayload = JSON.parse(e.data); } catch {}
+      const { message, classification } = failPayload;
+      stageOrder.forEach(s => {
+        if (document.getElementById(`${cardId}-s-${s}`)?.classList.contains('active'))
+          setStage(cardId, s, 'error', message || 'Failed');
+      });
+      if (classification) renderClassifierCard(cardId, classification);
+      if (message) {
+        const box = document.getElementById(`${cardId}-result`);
+        box.style.display = 'block';
+        document.getElementById(`${cardId}-headline`).textContent = message;
+      }
+      setJobStatus(cardId, 'error', 'Error');
+      es.close(); resolve();
+    });
+
+    es.addEventListener('error', () => {
+      setJobStatus(cardId, 'error', 'Connection lost');
+      es.close(); resolve();
+    });
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  TOKEN RENDERING
+// ══════════════════════════════════════════════════════════════════
+const SINGLE_MODE_BASELINE_INPUT = 8200; // rough estimate — ~7,872 tokens for the system prompt + ~300 user text overhead
+function renderTokens(cardId, tokens) {
+  const bar = document.getElementById(`${cardId}-tokens`);
+  if (!bar) return;
+  bar.innerHTML = '';
+  bar.style.display = 'flex';
+
+  if (tokens.single) {
+    const t = tokens.single;
+    bar.innerHTML = `
+      <div class="token-item"><div class="token-label">Input</div><div class="token-value input-tok">${t.input.toLocaleString()}</div></div>
+      <div class="token-item"><div class="token-label">Output</div><div class="token-value output-tok">${t.output.toLocaleString()}</div></div>
+      <div class="token-item"><div class="token-label">Total</div><div class="token-value total-tok">${t.total.toLocaleString()}</div></div>
+    `;
+    return;
+  }
+
+  const parts = [];
+  if (tokens.step1) {
+    parts.push(`<div class="token-item"><div class="token-label">Step 1 total</div><div class="token-value step1-tok">${tokens.step1.total.toLocaleString()}</div></div>`);
+  }
+  if (tokens.step2) {
+    parts.push(`<div class="token-item"><div class="token-label">Step 2 total</div><div class="token-value step2-tok">${tokens.step2.total.toLocaleString()}</div></div>`);
+  }
+  if (tokens.step1 || tokens.step2) {
+    const combined = (tokens.step1?.total || 0) + (tokens.step2?.total || 0);
+    parts.push(`<div class="token-item"><div class="token-label">Combined</div><div class="token-value total-tok">${combined.toLocaleString()}</div></div>`);
+    if (tokens.step2) {
+      const savings = Math.max(0, Math.round(100 * (1 - combined / SINGLE_MODE_BASELINE_INPUT)));
+      parts.push(`<div class="token-item"><div class="token-label">vs ~Single</div><div class="token-value savings-tok">~${savings}% saved</div></div>`);
+    }
+  }
+  bar.innerHTML = parts.join('');
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  RESULT RENDERING
+// ══════════════════════════════════════════════════════════════════
+function confChipClass(n) {
+  if (n >= 90) return 'conf-hi';
+  if (n >= 70) return 'conf-mid';
+  if (n >= 40) return 'conf-lo';
+  return 'conf-v-lo';
+}
+
+function renderClassifierCard(cardId, c) {
+  const box = document.getElementById(`${cardId}-classifier`);
+  if (!box) return;
+  box.style.display = 'flex';
+  document.getElementById(`${cardId}-result`).style.display = 'block';
+  const conf = typeof c.confidence === 'number' ? c.confidence : 0;
+  const secondary = Array.isArray(c.secondary_events) ? c.secondary_events : [];
+  box.innerHTML = `
+    <span class="tag tag-cat">${escapeHtml(c.smart_subcategory || '—')}</span>
+    <span class="conf-chip ${confChipClass(conf)}">${conf}/100</span>
+    ${c.userPicked ? '<span class="secondary-pill">user-picked</span>' : ''}
+    <span class="rationale-tip" title="${escapeHtml(c.rationale || '')}">${escapeHtml(c.rationale || '')}</span>
+    ${secondary.map(s => `<span class="secondary-pill">+ ${escapeHtml(s)}</span>`).join('')}
+  `;
+}
+
+const sentimentClass = {
+  'very positive':'tag-vpos','positive':'tag-pos',
+  'neutral':'tag-neu','negative':'tag-neg','very negative':'tag-vneg'
+};
+
+function showResult(cardId, result) {
+  document.getElementById(`${cardId}-result`).style.display = 'block';
+  document.getElementById(`${cardId}-headline`).textContent = result.headline || '—';
+  document.getElementById(`${cardId}-summary`).textContent  = result.summary  || '—';
+
+  const tags = document.getElementById(`${cardId}-tags`);
+  tags.innerHTML = '';
+  if (result.smart_subcategory && !result._classifier_confidence)
+    tags.innerHTML += `<span class="tag tag-cat">${escapeHtml(result.smart_subcategory)}</span>`;
+
+  const sLabel = result?.sentiment?.label || result?.sentiment;
+  if (sLabel) {
+    const cls = sentimentClass[String(sLabel).toLowerCase()] || 'tag-neu';
+    const scoreStr = (result.sentiment && typeof result.sentiment.score === 'number') ? ` · ${result.sentiment.score}` : '';
+    tags.innerHTML += `<span class="tag ${cls}" title="${escapeHtml(result?.sentiment?.rationale || '')}">${escapeHtml(sLabel)}${scoreStr}</span>`;
+  }
+
+  const ent = document.getElementById(`${cardId}-entities`);
+  ent.innerHTML = '';
+  if (result.key_entities) {
+    const ke = result.key_entities;
+    const bucket = (label, arr) => {
+      if (!arr || !arr.length) return '';
+      return `<span class="ent-label">${label}</span>` + arr.map(e => `<span class="ent-chip">${escapeHtml(String(e))}</span>`).join('');
+    };
+    if (Array.isArray(ke)) {
+      ent.innerHTML = '<span class="ent-label">Entities</span>' + ke.map(e => `<span class="ent-chip">${escapeHtml(String(e))}</span>`).join('');
+    } else {
+      ent.innerHTML =
+        bucket('Company', ke.company ? [ke.company] : []) +
+        bucket('Promoters', ke.promoters) +
+        bucket('Counterparties', ke.counterparties) +
+        bucket('Regulators', ke.regulators) +
+        bucket('Auditors', ke.auditors) +
+        bucket('Rating Agencies', ke.rating_agencies) +
+        bucket('Lenders', ke.banks_lenders);
+    }
+  }
+
+  document.getElementById(`${cardId}-json-pre`).textContent = JSON.stringify(result, null, 2);
+
+  if (result.smart_subcategory === 'Financial Updates' && result.smart_subcategory_specific) {
+    renderFinancialTables(cardId, result);
+  } else {
+    document.getElementById(`${cardId}-scope-row`).style.display = 'none';
+    document.getElementById(`${cardId}-fin-tables`).innerHTML = '';
+    document.getElementById(`${cardId}-insights`).innerHTML = '';
+  }
+}
+
+function toggleBlock(blockId, arrowId) {
+  const block = document.getElementById(blockId);
+  const arrow = document.getElementById(arrowId);
+  const open  = block.style.display === 'block';
+  block.style.display = open ? 'none' : 'block';
+  if (arrow) arrow.textContent = open ? '▶' : '▼';
+}
+
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, s => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]
+  ));
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  FINANCIAL TABLES
+// ══════════════════════════════════════════════════════════════════
+const cardScope = {};       // cardId -> 'standalone' | 'consolidated'
+const cardResult = {};      // cardId -> full result JSON
+const cardRequestId = {};   // cardId -> server requestId (for /retry)
+
+function renderFinancialTables(cardId, result) {
+  cardResult[cardId] = result;
+  const spec = result.smart_subcategory_specific || {};
+
+  const availableScopes = new Set();
+  ['pnl_by_period','balance_sheet_by_period','cash_flow_by_period','ratios_by_period','revenue_mix_by_period'].forEach(k => {
+    (spec[k] || []).forEach(e => { if (e?.scope) availableScopes.add(e.scope); });
+  });
+  (spec.banking_nbfc_specific?.bank_specific?.entries || []).forEach(e => { if (e?.scope) availableScopes.add(e.scope); });
+  (spec.banking_nbfc_specific?.nbfc_hfc_specific?.entries || []).forEach(e => { if (e?.scope) availableScopes.add(e.scope); });
+
+  const scopes = Array.from(availableScopes);
+  const defaultScope = scopes.includes('consolidated') ? 'consolidated' : (scopes[0] || 'standalone');
+  cardScope[cardId] = cardScope[cardId] || defaultScope;
+
+  const scopeRow = document.getElementById(`${cardId}-scope-row`);
+  scopeRow.style.display = 'flex';
+  const btns = document.getElementById(`${cardId}-scope-btns`);
+  const note = document.getElementById(`${cardId}-scope-note`);
+  btns.innerHTML = ['standalone','consolidated'].map(sc =>
+    `<button class="scope-btn ${cardScope[cardId] === sc ? 'active' : ''}" ${scopes.includes(sc) ? '' : 'disabled'} onclick="setScope('${cardId}','${sc}')">${sc}</button>`
+  ).join('');
+  note.textContent = scopes.length === 2
+    ? 'Both scopes available — toggle to compare.'
+    : (scopes.length === 1 ? `Only ${scopes[0]} disclosed in this filing.` : 'No scoped data disclosed.');
+
+  renderRetryButtons(cardId, spec);
+  renderTablesForScope(cardId);
+}
+
+function renderRetryButtons(cardId, spec) {
+  const el = document.getElementById(`${cardId}-retry-bar`);
+  if (!el) return;
+  const pnlScopes = new Set((spec.pnl_by_period || []).map(e => e?.scope).filter(Boolean));
+  const bsScopes  = new Set((spec.balance_sheet_by_period || []).map(e => e?.scope).filter(Boolean));
+  const cfScopes  = new Set((spec.cash_flow_by_period || []).map(e => e?.scope).filter(Boolean));
+
+  const needs = [];
+  // Balance Sheet — retry if P&L has a scope that BS doesn't.
+  for (const s of pnlScopes) {
+    if (!bsScopes.has(s)) needs.push({ target: 'balance_sheet', scope: s, label: `↻ Fetch missing ${s} Balance Sheet` });
+  }
+  // Cash Flow — retry only if NO CF at all (CF is often single-scope by design).
+  if (pnlScopes.size > 0 && cfScopes.size === 0) {
+    const s = pnlScopes.has('standalone') ? 'standalone' : 'consolidated';
+    needs.push({ target: 'cash_flow', scope: s, label: `↻ Fetch missing Cash Flow` });
+  }
+
+  if (!needs.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'flex';
+  el.innerHTML = needs.map((n, i) =>
+    `<button class="btn-secondary retry-btn" id="${cardId}-retry-${i}"
+        onclick="triggerRetry('${cardId}', '${n.target}', '${n.scope}', ${i})">${escapeHtml(n.label)}</button>`
+  ).join('');
+}
+
+async function triggerRetry(cardId, target, scope, btnIdx) {
+  const requestId = cardRequestId[cardId];
+  if (!requestId) return alert('Job expired. Re-run the file.');
+  const btn = document.getElementById(`${cardId}-retry-${btnIdx}`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
+  try {
+    const r = await fetch('/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId, target, scope }),
+    });
+    const json = await r.json();
+    if (!json.ok) throw new Error(json.error || 'Retry failed');
+    if (!json.data) throw new Error('Model said this block is not in the filing.');
+    // Merge into the card's result.
+    const res = cardResult[cardId];
+    const spec = res.smart_subcategory_specific = res.smart_subcategory_specific || {};
+    const listKey = target === 'balance_sheet' ? 'balance_sheet_by_period' : 'cash_flow_by_period';
+    spec[listKey] = spec[listKey] || [];
+    spec[listKey].push(json.data);
+    // Re-render.
+    renderFinancialTables(cardId, res);
+    // Update raw JSON view.
+    document.getElementById(`${cardId}-json-pre`).textContent = JSON.stringify(res, null, 2);
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Retry failed — click to try again'; }
+    alert(`Retry failed: ${err.message}`);
+  }
+}
+
+function setScope(cardId, sc) {
+  cardScope[cardId] = sc;
+  document.getElementById(`${cardId}-scope-btns`).querySelectorAll('.scope-btn').forEach(b =>
+    b.classList.toggle('active', b.textContent.trim() === sc));
+  renderTablesForScope(cardId);
+}
+
+function renderTablesForScope(cardId) {
+  const scope = cardScope[cardId];
+  const result = cardResult[cardId];
+  const spec = result?.smart_subcategory_specific || {};
+  const wrap = document.getElementById(`${cardId}-fin-tables`);
+
+  const pnlAll = (spec.pnl_by_period || []).filter(e => e.scope === scope);
+  const quarterlyEntry = pickLatest(pnlAll, ['Q4','Q3','Q2','Q1']);
+  const annualEntry    = pickLatest(pnlAll, ['FY','9M','H1','H2']);
+
+  const balanceEntry   = latest((spec.balance_sheet_by_period || []).filter(e => e.scope === scope));
+  const cashFlowEntry  = latest((spec.cash_flow_by_period  || []).filter(e => e.scope === scope));
+  const ratiosEntry    = latest((spec.ratios_by_period     || []).filter(e => e.scope === scope));
+  const revMixEntry    = latest((spec.revenue_mix_by_period|| []).filter(e => e.scope === scope));
+
+  const sectorCls = spec.period_info?.sector_classification;
+  const isBanksOrInsurance = ['bank','nbfc','hfc','insurance_life','insurance_general','amc'].includes(sectorCls);
+  const isInsuranceLife    = sectorCls === 'insurance_life';
+  const isInsuranceGeneral = sectorCls === 'insurance_general';
+  const isBanks = isBanksOrInsurance;
+  const bankEntry = ['bank','nbfc','hfc','amc'].includes(sectorCls)
+    ? latest((spec.banking_nbfc_specific?.bank_specific?.entries || []).filter(e => e.scope === scope))
+    : null;
+  const nbfcEntry = ['bank','nbfc','hfc','amc'].includes(sectorCls)
+    ? latest((spec.banking_nbfc_specific?.nbfc_hfc_specific?.entries || []).filter(e => e.scope === scope))
+    : null;
+  const lifeEntry = isInsuranceLife
+    ? latest((spec.insurance_specific?.life_specific?.entries || []).filter(e => e.scope === scope))
+    : null;
+  const genInsEntry = isInsuranceGeneral
+    ? latest((spec.insurance_specific?.general_specific?.entries || []).filter(e => e.scope === scope))
+    : null;
+
+  wrap.innerHTML = '';
+
+  // Extraction-completeness warnings — only fire on CONCRETE missing pieces, not heuristics.
+  const warnNotes = [];
+  const pnlScopes = new Set();
+  const periodsInPnL = new Set();
+  (spec.pnl_by_period || []).forEach(e => {
+    if (e?.scope) pnlScopes.add(e.scope);
+    if (e?.period_label) periodsInPnL.add(e.period_label);
+  });
+
+  const hasQ4FY = [...periodsInPnL].some(p => /^Q4\s+FY/i.test(p));
+  const hasQ2FY = [...periodsInPnL].some(p => /^Q2\s+FY/i.test(p));
+  const hasAnnualFY = [...periodsInPnL].some(p => /^FY/i.test(p));
+  const hasH1 = [...periodsInPnL].some(p => /^H1/i.test(p));
+
+  // Check 1: Q4 present but FY missing is a hard SEBI-mandated failure.
+  if (hasQ4FY && !hasAnnualFY) {
+    warnNotes.push(`Q4 is present but full-year (FY) rows are MISSING. Q4 filings are annual results per SEBI — the FY data is definitely in the PDF. Re-run with Thinking = MEDIUM or HIGH.`);
+  }
+
+  // Check 2: dual-scope P&L → dual-scope Balance Sheet is mandatory (SEBI presents them paired).
+  // Cash Flow is NOT expected to be dual-scope — many filings disclose only one scope's CF.
+  if (pnlScopes.size === 2) {
+    const bsScopes = new Set((spec.balance_sheet_by_period || []).map(e => e?.scope).filter(Boolean));
+    if (bsScopes.size === 1) {
+      const missing = ['standalone','consolidated'].find(s => !bsScopes.has(s));
+      warnNotes.push(`Balance Sheet missing <b>${missing}</b> scope — P&L has both scopes, so the ${missing} Balance Sheet is in the PDF too. Re-run with Thinking = MEDIUM or HIGH.`);
+    }
+  }
+
+  // Check 3: when Q4/Q2/FY/H1 is in the P&L, at least one BS entry and one CF entry must exist.
+  const annualOrH1 = hasQ4FY || hasQ2FY || hasAnnualFY || hasH1;
+  const bsEntries = (spec.balance_sheet_by_period || []).length;
+  const cfEntries = (spec.cash_flow_by_period || []).length;
+  if (annualOrH1 && bsEntries === 0) {
+    warnNotes.push(`Balance Sheet is MISSING. SEBI LODR Reg 33(3) mandates a Balance Sheet in any Q2 / Q4 / H1 / FY filing.`);
+  }
+  if (annualOrH1 && cfEntries === 0) {
+    warnNotes.push(`Cash Flow Statement is MISSING. SEBI LODR Reg 33(3) mandates a Cash Flow Statement in any Q2 / Q4 / H1 / FY filing.`);
+  }
+  if (warnNotes.length) {
+    const div = document.createElement('div');
+    div.className = 'extraction-warn';
+    div.innerHTML = `<div class="warn-title">⚠ Extraction incomplete</div>
+      <div class="warn-body">
+        <ul>${warnNotes.map(n => `<li>${n}</li>`).join('')}</ul>
+      </div>`;
+    wrap.appendChild(div);
+  }
+
+  wrap.appendChild(buildTable('Quarterly result',  quarterlyEntry?.period_label,  pnlRows(quarterlyEntry, isBanks)));
+  wrap.appendChild(buildTable('Profit & Loss',     annualEntry?.period_label,     pnlRows(annualEntry, isBanks)));
+  if (bankEntry) wrap.appendChild(buildTable('Banking metrics', bankEntry.period_label, bankRows(bankEntry)));
+  if (nbfcEntry) wrap.appendChild(buildTable('NBFC / HFC metrics', nbfcEntry.period_label, nbfcRows(nbfcEntry)));
+  if (lifeEntry) wrap.appendChild(buildTable('Life insurance metrics', lifeEntry.period_label, lifeInsuranceRows(lifeEntry)));
+  if (genInsEntry) wrap.appendChild(buildTable('General insurance metrics', genInsEntry.period_label, generalInsuranceRows(genInsEntry)));
+  wrap.appendChild(buildTable('Balance sheet', balanceEntry?.period_label || balanceEntry?.as_of_date, balanceRows(balanceEntry)));
+  wrap.appendChild(buildTable('Cash flow',     cashFlowEntry?.period_label, cashFlowRows(cashFlowEntry)));
+  wrap.appendChild(buildTable('Ratios',        (annualEntry?.period_label || ratiosEntry?.period_label), ratiosRows(ratiosEntry, annualEntry, balanceEntry)));
+  wrap.appendChild(buildTable('Shareholding',  spec.shareholding_pattern?.as_of_date, shareholdingRows(spec.shareholding_pattern)));
+  wrap.appendChild(buildTable('Revenue mix',   revMixEntry?.period_label,   revenueMixRows(revMixEntry)));
+
+  renderInsights(cardId, spec);
+}
+
+function latest(arr) {
+  if (!arr || !arr.length) return null;
+  // Prefer annual over quarter if both exist for a summary-style block; otherwise just pick the first entry.
+  return arr[0];
+}
+function pickLatest(arr, prefixes) {
+  if (!arr || !arr.length) return null;
+  for (const pre of prefixes) {
+    const hit = arr.find(e => (e.period_label || '').toUpperCase().startsWith(pre));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// Row shapes (children can themselves be rows or groups — arbitrary nesting):
+//   ['label', value]                                  — leaf row
+//   { label, value, children: [row, row, ...] }       — expandable group row
+function buildTable(title, periodLabel, rows) {
+  const wrap = document.createElement('div');
+  wrap.className = 'fin-table';
+  const cleaned = cleanRowTree(rows || []);
+  if (!cleaned.length) {
+    wrap.innerHTML = `
+      <div class="fin-table-head">
+        <div class="fin-table-title">${escapeHtml(title)}</div>
+        <div class="fin-table-sub">${escapeHtml(periodLabel || '')}</div>
+      </div>
+      <div class="fin-empty">Not disclosed in this filing.</div>`;
+    return wrap;
+  }
+  const flat = flattenRowTree(cleaned);
+  const bodyRows = flat.map(renderFinRow).join('');
+  wrap.innerHTML = `
+    <div class="fin-table-head">
+      <div class="fin-table-title">${escapeHtml(title)}</div>
+      <div class="fin-table-sub">${escapeHtml(periodLabel || '')}</div>
+    </div>
+    <div class="fin-table-body"><table>
+      <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table></div>`;
+  return wrap;
+}
+
+function cleanRowTree(rows) {
+  const out = [];
+  for (const r of rows) {
+    if (!r) continue;
+    if (Array.isArray(r)) {
+      if (r[1] != null && r[1] !== '') out.push(r);
+    } else {
+      const kids = cleanRowTree(r.children || []);
+      if (r.value != null || kids.length) out.push({ label: r.label, value: r.value, children: kids });
+    }
+  }
+  return out;
+}
+
+function flattenRowTree(rows, parentId = null, depth = 0, out = []) {
+  for (const r of rows) {
+    if (Array.isArray(r)) {
+      out.push({ label: r[0], value: r[1], parentId, depth, isParent: false });
+    } else if (r.children && r.children.length) {
+      const id = 'g-' + Math.random().toString(36).slice(2, 9);
+      out.push({ id, label: r.label, value: r.value, parentId, depth, isParent: true });
+      flattenRowTree(r.children, id, depth + 1, out);
+    } else {
+      out.push({ label: r.label, value: r.value, parentId, depth, isParent: false });
+    }
+  }
+  return out;
+}
+
+function renderFinRow(r) {
+  const hidden = r.parentId != null ? ' style="display:none"' : '';
+  const indent = 10 + r.depth * 20;
+  const parentAttr = r.parentId ? ` data-parent="${r.parentId}"` : '';
+  const idAttr = r.id ? ` data-group-id="${r.id}"` : '';
+  const cls = r.isParent ? 'row-parent' : (r.depth > 0 ? 'row-child' : '');
+  const onClick = r.isParent ? ` onclick="toggleGroupRow(this, '${r.id}')"` : '';
+  const labelHtml = r.isParent
+    ? `<span class="fin-caret" data-caret="${r.id}">+</span>${escapeHtml(r.label)}`
+    : escapeHtml(r.label);
+  return `<tr class="${cls}"${parentAttr}${idAttr}${onClick}${hidden}>
+    <td style="padding-left:${indent}px">${labelHtml}</td>
+    <td class="${numClass(r.value)}">${formatVal(r.value)}</td>
+  </tr>`;
+}
+
+function toggleGroupRow(parentEl, groupId) {
+  const tbody = parentEl.parentElement;
+  const caret = parentEl.querySelector(`[data-caret="${groupId}"]`);
+  const direct = tbody.querySelectorAll(`tr[data-parent="${groupId}"]`);
+  if (!direct.length) return;
+  const isOpen = direct[0].style.display !== 'none';
+  if (isOpen) {
+    collapseGroup(tbody, groupId);
+    if (caret) caret.textContent = '+';
+  } else {
+    direct.forEach(tr => tr.style.display = '');
+    if (caret) caret.textContent = '−';
+  }
+}
+
+function collapseGroup(tbody, groupId) {
+  const direct = tbody.querySelectorAll(`tr[data-parent="${groupId}"]`);
+  direct.forEach(tr => {
+    tr.style.display = 'none';
+    const childGroupId = tr.dataset.groupId;
+    if (childGroupId) {
+      const childCaret = tr.querySelector(`[data-caret="${childGroupId}"]`);
+      if (childCaret) childCaret.textContent = '+';
+      collapseGroup(tbody, childGroupId);
+    }
+  });
+}
+
+function numClass(v) {
+  if (v == null || v === '') return 'num-na';
+  const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[, %]/g, ''));
+  if (Number.isNaN(n)) return '';
+  if (n > 0) return 'num-pos';
+  if (n < 0) return 'num-neg';
+  return '';
+}
+function formatVal(v) {
+  if (v == null || v === '') return '—';
+  if (typeof v === 'number') return v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  return escapeHtml(String(v));
+}
+
+function pnlRows(e, isBanks) {
+  if (!e) return [];
+  if (isBanks) {
+    return [
+      ['Net profit (₹ Cr)', e.net_profit],
+      ['PBT (₹ Cr)',        e.profit_before_tax],
+      ['EPS basic (₹)',     e.eps_basic],
+      ['EPS diluted (₹)',   e.eps_diluted],
+    ];
+  }
+  const br = e.expense_breakdown || {};
+  const oi = e.other_income_breakdown || {};
+
+  // ALWAYS derive operating_expenses, operating_profit and OPM% from the atomic P&L numbers.
+  // The LLM's own derived values have been unreliable (e.g. it sometimes returns total_expenses
+  // in the operating_expenses slot), so we ignore those fields and recompute here.
+  const r2 = n => (n == null ? null : Math.round(n * 100) / 100);
+  const opEx = (e.total_expenses != null && e.interest != null && e.depreciation != null)
+    ? r2(e.total_expenses - e.interest - e.depreciation)
+    : null;
+  const opProfit = (e.sales != null && opEx != null)
+    ? r2(e.sales - opEx)
+    : null;
+  const opm = (opProfit != null && e.sales)
+    ? r2((opProfit / e.sales) * 100)
+    : null;
+  const taxPct = (e.profit_before_tax && e.tax_amount != null)
+    ? r2((e.tax_amount / e.profit_before_tax) * 100)
+    : null;
+
+  const opExChildren = [
+    ['Material cost',                 br.material_cost],
+    ['Purchases of stock-in-trade',   br.purchases_of_stock_in_trade],
+    ['Changes in inventories',        br.changes_in_inventories],
+    ['Employee cost',                 br.employee_cost],
+    ['Manufacturing expenses',        br.manufacturing_expenses],
+    ['Power & fuel',                  br.power_and_fuel],
+    ['Other expenses',                br.other_expenses],
+  ];
+  (br.additional_line_items || []).forEach(item => {
+    if (item && item.name != null && item.value_cr != null) {
+      opExChildren.push([item.name, item.value_cr]);
+    }
+  });
+
+  return [
+    ['Sales (₹ Cr)', e.sales],
+    {
+      label: 'Operating expenses (₹ Cr)',
+      value: opEx,
+      children: opExChildren,
+    },
+    ['Operating profit (₹ Cr)', opProfit],
+    ['OPM %',                   opm],
+    {
+      label: 'Other income (₹ Cr)',
+      value: e.other_income,
+      children: [
+        ['Recurring other income',  oi.recurring_other_income],
+        ['Exceptional items',       oi.exceptional_items],
+        ['Exceptional description', oi.exceptional_items_description],
+      ],
+    },
+    ['Interest / finance costs (₹ Cr)', e.interest],
+    ['Depreciation (₹ Cr)',             e.depreciation],
+    ['Total expenses (₹ Cr)',           e.total_expenses],
+    ['PBT (₹ Cr)',                      e.profit_before_tax],
+    ['Tax (₹ Cr)',                      e.tax_amount],
+    ['Tax %',                           taxPct],
+    ['Net profit (₹ Cr)',               e.net_profit],
+    ['EPS basic (₹)',                   e.eps_basic],
+    ['EPS diluted (₹)',                 e.eps_diluted],
+    ['Face value (₹)',                  e.face_value],
+    ['Dividend payout %',               e.dividend_payout_percent],
+  ];
+}
+
+function bankRows(e) {
+  if (!e) return [];
+  return [
+    ['Interest earned (₹ Cr)',         e.interest_earned],
+    ['Interest expended (₹ Cr)',       e.interest_expended],
+    ['Net interest income (₹ Cr)',     e.net_interest_income],
+    ['NIM %',                          e.nim_percent],
+    ['Other income (₹ Cr)',            e.other_income],
+    ['Operating profit (₹ Cr)',        e.operating_profit],
+    ['Provisions & contingencies',     e.provisions_and_contingencies],
+    ['PBT (₹ Cr)',                     e.profit_before_tax],
+    ['Net profit (₹ Cr)',              e.net_profit],
+    ['Total deposits (₹ Cr)',          e.total_deposits],
+    ['Total advances (₹ Cr)',          e.total_advances],
+    ['CD ratio %',                     e.credit_deposit_ratio_pct],
+    ['CASA deposits (₹ Cr)',           e.casa_deposits],
+    ['CASA %',                         e.casa_percent],
+    ['GNPA (₹ Cr)',                    e.gross_npa_amount],
+    ['GNPA %',                         e.gross_npa_percent],
+    ['NNPA (₹ Cr)',                    e.net_npa_amount],
+    ['NNPA %',                         e.net_npa_percent],
+    ['PCR %',                          e.provision_coverage_ratio_percent],
+    ['CAR %',                          e.capital_adequacy_ratio_percent],
+    ['Tier-1 %',                       e.tier1_capital_percent],
+    ['CET-1 %',                        e.cet1_percent],
+    ['ROA %',                          e.roa_percent],
+    ['ROE %',                          e.roe_percent],
+    ['Cost-to-income %',               e.cost_to_income_percent],
+  ];
+}
+
+function nbfcRows(e) {
+  if (!e) return [];
+  return [
+    ['AUM (₹ Cr)',                  e.aum],
+    ['AUM growth YoY %',            e.aum_growth_yoy_percent],
+    ['Disbursements (₹ Cr)',        e.disbursements],
+    ['Collection efficiency %',     e.collection_efficiency_percent],
+    ['Gross Stage-3 %',             e.gross_stage_3_percent],
+    ['Net Stage-3 %',               e.net_stage_3_percent],
+    ['PCR on Stage-3 %',            e.provision_coverage_on_stage3_percent],
+    ['Cost of funds %',             e.cost_of_funds_percent],
+    ['Yield on advances %',         e.yield_on_advances_percent],
+    ['Spread %',                    e.spread_percent],
+    ['NIM %',                       e.nim_percent],
+    ['CAR %',                       e.capital_adequacy_ratio_percent],
+    ['Tier-1 %',                    e.tier1_capital_percent],
+  ];
+}
+
+function lifeInsuranceRows(e) {
+  if (!e) return [];
+  return [
+    {
+      label: 'Total premium income (₹ Cr)',
+      value: e.total_premium_income,
+      children: [
+        ['First-year premium',   e.first_year_premium],
+        ['Renewal premium',      e.renewal_premium],
+        ['Single premium',       e.single_premium],
+      ],
+    },
+    ['Reinsurance ceded (₹ Cr)',        e.reinsurance_ceded],
+    ['Net premium (₹ Cr)',              e.net_premium],
+    ['Income from investments (₹ Cr)',  e.income_from_investments],
+    ['Other income — policyholders',    e.other_income_policyholders],
+    ['Total income — policyholders A/c', e.total_income_policyholders_account],
+    {
+      label: 'Total outgo (₹ Cr)',
+      value: e.total_outgo,
+      children: [
+        ['Commission paid',                        e.commission_paid],
+        ['Operating expenses (insurance)',         e.operating_expenses_related_to_insurance_business],
+        ['Net benefits paid',                      e.benefits_paid_net],
+        ['Change in actuarial liability',          e.change_in_actuarial_liability],
+        ['Provision for linked liabilities',       e.provision_for_linked_liabilities],
+      ],
+    },
+    ['Surplus / (deficit) before tax',  e.surplus_deficit_before_tax],
+    ['Transferred to shareholders',     e.surplus_transferred_to_shareholders],
+    ['Retained in policyholders fund',  e.surplus_retained_in_policyholders_fund],
+    ['PAT — shareholders A/c (₹ Cr)',   e.profit_after_tax_shareholders_account],
+    ['Solvency ratio',                  e.solvency_ratio],
+    ['Expense management %',            e.expense_management_ratio_percent],
+    ['Commission ratio %',              e.commission_ratio_percent],
+    ['Claims ratio %',                  e.claims_ratio_percent],
+    ['Conservation ratio %',            e.conservation_ratio_percent],
+    {
+      label: 'Persistency (%)',
+      value: e.persistency_13m_percent,
+      children: [
+        ['13-month',  e.persistency_13m_percent],
+        ['25-month',  e.persistency_25m_percent],
+        ['37-month',  e.persistency_37m_percent],
+        ['49-month',  e.persistency_49m_percent],
+        ['61-month',  e.persistency_61m_percent],
+      ],
+    },
+    ['Embedded Value (EV) ₹ Cr',        e.embedded_value_ev_cr],
+    ['EV operating return %',           e.ev_operating_return_percent],
+    ['Value of New Business (VNB) ₹ Cr', e.value_of_new_business_vnb_cr],
+    ['VNB margin %',                    e.vnb_margin_percent],
+    ['APE (₹ Cr)',                      e.annualized_premium_equivalent_ape_cr],
+    ['New Business Premium ₹ Cr',       e.new_business_premium_nbp_cr],
+    ['AUM (₹ Cr)',                      e.assets_under_management_cr],
+    ['Policyholder fund (₹ Cr)',        e.policyholder_fund_cr],
+    ['Shareholder fund (₹ Cr)',         e.shareholder_fund_cr],
+    ['Policies issued',                 e.number_of_policies_issued],
+    ['Offices',                         e.number_of_offices],
+    ['Individual agents',               e.number_of_individual_agents],
+  ];
+}
+
+function generalInsuranceRows(e) {
+  if (!e) return [];
+  const rows = [
+    ['Gross direct premium (GDPI) ₹ Cr', e.gross_direct_premium_income_gdpi],
+    ['Net written premium (₹ Cr)',       e.net_written_premium],
+    ['Net earned premium (₹ Cr)',        e.net_earned_premium],
+    ['Reinsurance ceded (₹ Cr)',         e.reinsurance_ceded],
+    ['Net incurred claims (₹ Cr)',       e.net_incurred_claims],
+    ['Claims (loss) ratio %',            e.claims_ratio_percent],
+    ['Commission ratio %',               e.commission_ratio_percent],
+    ['Expense ratio %',                  e.expense_ratio_percent],
+    ['Combined ratio %',                 e.combined_ratio_percent],
+    ['Underwriting profit / (loss)',     e.underwriting_profit_loss],
+    ['Investment income (₹ Cr)',         e.investment_income],
+    ['Investment yield %',               e.investment_yield_percent],
+    ['PBT (₹ Cr)',                       e.profit_before_tax],
+    ['PAT (₹ Cr)',                       e.profit_after_tax],
+    ['Solvency ratio',                   e.solvency_ratio],
+    ['AUM (₹ Cr)',                       e.assets_under_management_cr],
+  ];
+  (e.segment_mix || []).forEach(seg => {
+    rows.push([`${seg.segment_name} — GDPI`, seg.gross_premium_cr]);
+    if (seg.gross_premium_percent_of_total != null) rows.push([`${seg.segment_name} — % of total`, seg.gross_premium_percent_of_total]);
+    if (seg.claims_ratio_percent != null) rows.push([`${seg.segment_name} — claims ratio %`, seg.claims_ratio_percent]);
+    if (seg.combined_ratio_percent != null) rows.push([`${seg.segment_name} — combined ratio %`, seg.combined_ratio_percent]);
+  });
+  return rows;
+}
+
+function balanceRows(e) {
+  if (!e) return [];
+  const bb = e.borrowings_breakdown || {};
+  const olb = e.other_liabilities_breakdown || {};
+  const fa = e.fixed_assets_breakdown || {};
+  const oa = e.other_assets_breakdown || {};
+  return [
+    {
+      label: 'Total liabilities (₹ Cr)',
+      value: e.total_liabilities,
+      children: [
+        ['Equity share capital', e.equity_share_capital],
+        ['Reserves & surplus',   e.reserves_and_surplus],
+        {
+          label: 'Total borrowings',
+          value: e.total_borrowings,
+          children: [
+            ['Long-term borrowings',  bb.long_term_borrowings],
+            ['Short-term borrowings', bb.short_term_borrowings],
+            ['Lease liabilities',     bb.lease_liabilities],
+            ['Other borrowings',      bb.other_borrowings],
+          ],
+        },
+        {
+          label: 'Other liabilities',
+          value: e.other_liabilities,
+          children: [
+            ['Trade payables',                olb.trade_payables],
+            ['Provisions',                    olb.provisions],
+            ['Deferred tax liability',        olb.deferred_tax_liability],
+            ['Other current liabilities',     olb.other_current_liabilities],
+            ['Other non-current liabilities', olb.other_non_current_liabilities],
+          ],
+        },
+      ],
+    },
+    {
+      label: 'Total assets (₹ Cr)',
+      value: e.total_assets,
+      children: [
+        {
+          label: 'Fixed assets — net',
+          value: e.fixed_assets_net,
+          children: [
+            ['Land',                 fa.land],
+            ['Buildings',            fa.buildings],
+            ['Plant & machinery',    fa.plant_and_machinery],
+            ['Equipment',            fa.equipment],
+            ['Computers',            fa.computers],
+            ['Furniture & fittings', fa.furniture_and_fittings],
+            ['Vehicles',             fa.vehicles],
+            ['Intangibles',          fa.intangible_assets],
+            ['Other fixed assets',   fa.other_fixed_assets],
+          ],
+        },
+        ['CWIP',        e.capital_work_in_progress],
+        ['Investments', e.investments],
+        {
+          label: 'Other assets',
+          value: e.other_assets,
+          children: [
+            ['Inventories',          oa.inventories],
+            ['Trade receivables',    oa.trade_receivables],
+            ['Cash & equivalents',   oa.cash_and_equivalents],
+            ['Loans & advances',     oa.loans_and_advances],
+            ['Other current assets', oa.other_current_assets],
+            ['Deferred tax asset',   oa.deferred_tax_asset],
+            ['Goodwill',             oa.goodwill],
+          ],
+        },
+      ],
+    },
+    ['Net debt (₹ Cr)',          e.net_debt],
+    ['Debt-to-equity',           e.debt_to_equity],
+    ['Book value per share (₹)', e.book_value_per_share],
+  ];
+}
+
+function cashFlowRows(e) {
+  if (!e) return [];
+  const op = e.operating_breakdown || {};
+  const inv = e.investing_breakdown || {};
+  const fin = e.financing_breakdown || {};
+  return [
+    {
+      label: 'Cash from operating (₹ Cr)',
+      value: e.cash_from_operating,
+      children: [
+        ['Profit from operations',         op.profit_from_operations],
+        ['Δ Receivables',                  op.change_in_receivables],
+        ['Δ Inventory',                    op.change_in_inventory],
+        ['Δ Payables',                     op.change_in_payables],
+        ['Operating deposits change',      op.operating_deposits_change],
+        ['Other WC items',                 op.other_working_capital_items],
+        ['Total WC changes',               op.total_working_capital_changes],
+        ['Direct taxes paid',              op.direct_taxes_paid],
+        ['Interest paid (in operating)',   op.interest_paid_in_operating],
+      ],
+    },
+    {
+      label: 'Cash from investing (₹ Cr)',
+      value: e.cash_from_investing,
+      children: [
+        ['Fixed assets purchased',         inv.fixed_assets_purchased],
+        ['Fixed assets sold',              inv.fixed_assets_sold],
+        ['CWIP addition',                  inv.capital_work_in_progress_addition],
+        ['Investments purchased',          inv.investments_purchased],
+        ['Investments sold',               inv.investments_sold],
+        ['Interest received',              inv.interest_received],
+        ['Dividend received',              inv.dividend_received],
+        ['Acquisitions',                   inv.acquisitions],
+        ['Redemption/cancellation shares', inv.redemption_or_cancellation_of_shares],
+        ['Other investing',                inv.other_investing_items],
+      ],
+    },
+    {
+      label: 'Cash from financing (₹ Cr)',
+      value: e.cash_from_financing,
+      children: [
+        ['Proceeds from share issue',      fin.proceeds_from_share_issue],
+        ['Proceeds from borrowings',       fin.proceeds_from_borrowings],
+        ['Repayment of borrowings',        fin.repayment_of_borrowings],
+        ['Interest paid',                  fin.interest_paid_in_financing],
+        ['Dividend paid',                  fin.dividend_paid],
+        ['Change in financial liabilities', fin.change_in_financial_liabilities],
+        ['Lease payments',                 fin.lease_payments],
+        ['Other financing',                fin.other_financing_items],
+      ],
+    },
+    ['Net cash flow (₹ Cr)',  e.net_cash_flow],
+    ['Opening cash (₹ Cr)',   e.opening_cash_balance],
+    ['Closing cash (₹ Cr)',   e.closing_cash_balance],
+    ['Free cash flow (₹ Cr)', e.free_cash_flow],
+  ];
+}
+
+// Compute ratios client-side from the atomic P&L and balance sheet numbers.
+// This avoids the LLM returning wrong or missing values. `ratiosEntry` is used as a fallback
+// when we can't derive (e.g., no balance sheet in the filing).
+function ratiosRows(ratiosEntry, annualPnL, balance) {
+  const r2 = n => (n == null || !Number.isFinite(n) ? null : Math.round(n * 100) / 100);
+  const e = ratiosEntry || {};
+  const p = annualPnL || {};
+  const b = balance || {};
+  const oa = b.other_assets_breakdown || {};
+  const olb = b.other_liabilities_breakdown || {};
+  const br = p.expense_breakdown || {};
+
+  const sales = p.sales;
+  const receivables = oa.trade_receivables;
+  const inventories = oa.inventories;
+  const payables = olb.trade_payables;
+  const materialCost = br.material_cost;
+  const totalAssets = b.total_assets;
+  const totalBorrow = b.total_borrowings;
+  const equity = (b.equity_share_capital != null && b.reserves_and_surplus != null)
+    ? b.equity_share_capital + b.reserves_and_surplus
+    : null;
+  const capitalEmployed = (equity != null && totalBorrow != null)
+    ? equity + totalBorrow
+    : null;
+  const pbt = p.profit_before_tax;
+  const interest = p.interest;
+  const pat = p.net_profit;
+  const ebit = (pbt != null && interest != null) ? pbt + interest : null;
+
+  const days = (num, den) =>
+    (num != null && den != null && den !== 0) ? r2((num / den) * 365) : null;
+  const pct = (num, den) =>
+    (num != null && den != null && den !== 0) ? r2((num / den) * 100) : null;
+  const ratio = (num, den) =>
+    (num != null && den != null && den !== 0) ? r2(num / den) : null;
+
+  const debtor  = days(receivables, sales);
+  const invDays = days(inventories, materialCost);
+  const payDays = days(payables, materialCost);
+  const ccc = (debtor != null && invDays != null && payDays != null)
+    ? r2(debtor + invDays - payDays) : null;
+  const wc = (receivables != null && inventories != null && payables != null && sales)
+    ? r2(((receivables + inventories - payables) / sales) * 365) : null;
+
+  const roce = pct(ebit, capitalEmployed);
+  const roe  = pct(pat, equity);
+  const roa  = pct(pat, totalAssets);
+  const aTurn = ratio(sales, totalAssets);
+  const iCov = (interest != null && interest > 0.5 && ebit != null)
+    ? r2(ebit / interest)
+    : null;
+
+  // Fall back to LLM-provided value when we can't derive, so nothing disappears silently.
+  const pick = (derived, fallback) => (derived != null ? derived : (fallback != null ? fallback : null));
+
+  return [
+    ['Debtor days',           pick(debtor,  e.debtor_days)],
+    ['Inventory days',        pick(invDays, e.inventory_days)],
+    ['Payable days',          pick(payDays, e.payable_days)],
+    ['Cash conversion cycle', pick(ccc,     e.cash_conversion_cycle_days)],
+    ['Working capital days',  pick(wc,      e.working_capital_days)],
+    ['ROCE %',                pick(roce,    e.roce_percent)],
+    ['ROE %',                 pick(roe,     e.roe_percent)],
+    ['ROA %',                 pick(roa,     e.roa_percent)],
+    ['Asset turnover',        pick(aTurn,   e.asset_turnover)],
+    ['Interest coverage',     pick(iCov,    e.interest_coverage_ratio)],
+  ];
+}
+
+function shareholdingRows(p) {
+  if (!p) return [];
+  return [
+    ['Promoter %',           p.promoter_percent],
+    ['Promoter pledge %',    p.promoter_pledge_percent],
+    ['FII %',                p.fii_percent],
+    ['DII %',                p.dii_percent],
+    ['Public %',             p.public_percent],
+    ['Shareholders count',   p.number_of_shareholders],
+  ];
+}
+
+function revenueMixRows(e) {
+  if (!e) return [];
+  const d = e.domestic_vs_exports || {};
+  const rows = [
+    ['Domestic revenue (₹ Cr)',  d.domestic_revenue_cr],
+    ['Domestic %',               d.domestic_revenue_percent],
+    ['Exports revenue (₹ Cr)',   d.exports_revenue_cr],
+    ['Exports %',                d.exports_revenue_percent],
+    ['Imports value (₹ Cr)',     d.imports_value_cr],
+    ['Imports % of costs',       d.imports_percent_of_costs],
+    ['Forex earnings (₹ Cr)',    d.forex_earnings_cr],
+    ['Forex outgo (₹ Cr)',       d.forex_outgo_cr],
+  ];
+  (e.product_wise || []).forEach(p => {
+    rows.push([`Product: ${p.product_name}`, `${p.revenue_cr ?? '—'} Cr · ${p.revenue_percent ?? '—'}%`]);
+  });
+  (e.geography_wise || []).forEach(g => {
+    rows.push([`Geography: ${g.geography}`, `${g.revenue_cr ?? '—'} Cr · ${g.revenue_percent ?? '—'}%`]);
+  });
+  (e.channel_wise || []).forEach(c => {
+    rows.push([`Channel: ${c.channel}`, `${c.revenue_cr ?? '—'} Cr · ${c.revenue_percent ?? '—'}%`]);
+  });
+  if (e.customer_concentration) {
+    const cc = e.customer_concentration;
+    if (cc.top_1_customer_percent != null)  rows.push(['Top 1 customer %', cc.top_1_customer_percent]);
+    if (cc.top_5_customers_percent != null) rows.push(['Top 5 customers %', cc.top_5_customers_percent]);
+    if (cc.top_10_customers_percent != null) rows.push(['Top 10 customers %', cc.top_10_customers_percent]);
+  }
+  return rows;
+}
+
+function renderInsights(cardId, spec) {
+  const wrap = document.getElementById(`${cardId}-insights`);
+  wrap.innerHTML = '';
+  const items = [];
+
+  if (spec.dividend_embedded && Object.values(spec.dividend_embedded).some(v => v != null)) {
+    const d = spec.dividend_embedded;
+    items.push(['Dividend', [
+      d.dividend_type && `Type: ${d.dividend_type}`,
+      d.dividend_per_share_rs != null && `₹${d.dividend_per_share_rs}/share`,
+      d.dividend_percent_of_face_value != null && `${d.dividend_percent_of_face_value}% of face value`,
+      d.record_date && `Record date: ${d.record_date}`,
+      d.payment_date && `Payment date: ${d.payment_date}`,
+      d.total_payout_cr != null && `Total payout: ₹${d.total_payout_cr} Cr`,
+    ].filter(Boolean).join(' · ')]);
+  }
+
+  if (spec.auditor && (spec.auditor.auditor_name || spec.auditor.audit_opinion)) {
+    const a = spec.auditor;
+    const parts = [
+      a.auditor_name && `Auditor: ${a.auditor_name}`,
+      a.audit_opinion && `Opinion: ${a.audit_opinion}`,
+      a.going_concern_note?.flag && `⚠ Going concern flag`,
+      a.audit_qualifications?.length && `${a.audit_qualifications.length} qualifications`,
+      a.emphasis_of_matter?.length && `${a.emphasis_of_matter.length} emphasis of matter`,
+    ].filter(Boolean);
+    items.push(['Auditor', parts.join(' · ')]);
+  }
+
+  const oi = spec.other_insights || {};
+  if (oi.order_book_value_cr != null || oi.order_book_description)
+    items.push(['Order book', [oi.order_book_value_cr != null && `₹${oi.order_book_value_cr} Cr`, oi.order_book_description].filter(Boolean).join(' — ')]);
+  if (oi.capacity_utilisation_percent != null)
+    items.push(['Capacity util.', `${oi.capacity_utilisation_percent}%`]);
+  if (oi.current_capacity && (oi.current_capacity.value != null || oi.current_capacity.description))
+    items.push(['Capacity', [oi.current_capacity.value, oi.current_capacity.unit, oi.current_capacity.description].filter(Boolean).join(' ')]);
+  if (oi.new_capacity_announced && (oi.new_capacity_announced.value != null || oi.new_capacity_announced.description))
+    items.push(['New capacity', [oi.new_capacity_announced.value, oi.new_capacity_announced.unit, oi.new_capacity_announced.description].filter(Boolean).join(' ')]);
+  if (oi.capex_plan && (oi.capex_plan.amount_cr != null || oi.capex_plan.description))
+    items.push(['Capex plan', [oi.capex_plan.amount_cr != null && `₹${oi.capex_plan.amount_cr} Cr`, oi.capex_plan.time_horizon, oi.capex_plan.description].filter(Boolean).join(' · ')]);
+  if (oi.contingent_liabilities_cr != null)
+    items.push(['Contingent liab.', `₹${oi.contingent_liabilities_cr} Cr`]);
+  if (oi.related_party_transactions_summary)
+    items.push(['RPT', oi.related_party_transactions_summary]);
+  if (Array.isArray(oi.forward_guidance) && oi.forward_guidance.length)
+    items.push(['Guidance', oi.forward_guidance.map(g => `${g.metric}: ${g.value_or_range} (${g.time_horizon})`).join(' · ')]);
+  if (Array.isArray(oi.management_quotes) && oi.management_quotes.length)
+    items.push(['Quotes', oi.management_quotes.slice(0, 3).map(q => `“${q}”`).join('  ')]);
+  if (Array.isArray(oi.risks_flagged) && oi.risks_flagged.length)
+    items.push(['Risks', oi.risks_flagged.join(' · ')]);
+
+  if (items.length) {
+    wrap.innerHTML += `<div class="insights-title">Other insights</div>
+      <div class="insights-grid">${items.map(([k,v]) => `
+        <div class="insight-card"><div class="insight-key">${escapeHtml(k)}</div><div class="insight-val">${escapeHtml(v)}</div></div>
+      `).join('')}</div>`;
+  }
+
+  const flags = spec.data_integrity_flags || [];
+  if (flags.length) {
+    const html = `<div class="integrity-flags">
+      <div class="flag-title">⚠ Data integrity flags (${flags.length})</div>
+      ${flags.map(f => `<div class="flag-item">${escapeHtml(f.check)} — ${escapeHtml(f.period || '')} · expected ${formatVal(f.expected)}, got ${formatVal(f.actual)} (Δ ${formatVal(f.delta)})${f.note ? ' · ' + escapeHtml(f.note) : ''}</div>`).join('')}
+    </div>`;
+    wrap.innerHTML += html;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════════════
+loadConfig();
+onModelChange();
+onProviderChange();
+selectMode(config.mode || 'text');
+selectPipeline(config.pipeline || 'single');
+updateExtractBar();
+</script>
+</body>
+</html>

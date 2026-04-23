@@ -1,0 +1,34 @@
+{
+  "smart_subcategory": "Financial Updates",
+  "headline": "HDFC Bank reports FY26 audited financial results and recommends final dividend of ₹13 per share",
+  "summary": "HDFC Bank approved standalone and consolidated audited financial results for the quarter and year ended March 31, 2026, with an unmodified audit opinion. The Board recommended a final dividend of ₹13.00 per share, totaling ₹15.50 for the year, payable after shareholder approval at the AGM. The Board also approved fund raising of up to ₹60,000 crore via debt instruments and proposed amendments to the Employee Stock Incentive Scheme.",
+  "sentiment": "positive",
+  "key_entities": [
+    "B S R & Co. LLP",
+    "Batliboi & Purohit",
+    "SEBI"
+  ],
+  "smart_subcategory_specific": {
+    "result_type": "quarterly_and_yearly",
+    "reporting_period_quarter": "Q4 FY26",
+    "reporting_period_year": "FY26",
+    "results_basis": "both",
+    "standalone": {
+      "quarter": null,
+      "year": null
+    },
+    "consolidated": {
+      "quarter": null,
+      "year": null
+    },
+    "monthly_update": null,
+    "dividend_declared_with_results": true,
+    "dividend_per_share_rs": 13,
+    "auditor_opinion": "unmodified",
+    "auditor_qualification_text": null,
+    "guidance_provided": null,
+    "guidance_text": null,
+    "one_time_items_flag": null,
+    "one_time_items_description": null
+  }
+}

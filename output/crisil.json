@@ -1,0 +1,21 @@
+{
+  "smart_subcategory": "Financial Updates",
+  "headline": "Crisil Limited Q1 2026 financial results and interim dividend declared",
+  "summary": "Crisil Limited reported standalone and consolidated financial results for the quarter ended March 31, 2026, and approved an interim dividend of ₹9 per equity share.",
+  "sentiment": "positive",
+  "key_entities": [
+    "Crisil Limited"
+  ],
+  "smart_subcategory_specific": {
+    "financial_period": "Q1 2026",
+    "revenue_cr": null,
+    "revenue_yoy_change_pct": null,
+    "net_profit_cr": null,
+    "net_profit_yoy_change_pct": null,
+    "ebitda_cr": null,
+    "ebitda_yoy_change_pct": null,
+    "eps": null,
+    "dividend_per_share": 9,
+    "dividend_type": "Interim"
+  }
+}
