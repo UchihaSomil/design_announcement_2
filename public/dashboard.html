@@ -80,6 +80,36 @@
 
     .last-poll-txt { font-size: 11px; color: var(--muted2); }
 
+    /* ── Mode tabs ── */
+    .mode-tabs { display: flex; gap: 2px; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 2px; margin-left: 12px; }
+    .mode-tab {
+      padding: 5px 14px; font-size: 12px; font-weight: 600; color: #666;
+      background: transparent; border: none; border-radius: 6px; cursor: pointer; transition: all .15s;
+    }
+    .mode-tab:hover { color: #aaa; }
+    .mode-tab.active { background: #4f46e5; color: #fff; }
+
+    /* ── Company search panel ── */
+    .company-search-bar {
+      flex-shrink: 0; padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      display: none; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .company-search-bar.visible { display: flex; }
+    .company-search-bar input, .company-search-bar select {
+      background: var(--bg3); border: 1px solid var(--border2); border-radius: 6px;
+      padding: 6px 10px; font-size: 12px; color: var(--text); outline: none;
+      font-family: inherit;
+    }
+    .company-search-bar input:focus { border-color: #4f46e5; }
+    .search-go-btn {
+      padding: 6px 16px; border-radius: 6px; font-size: 12px; font-weight: 600;
+      background: #4f46e5; color: #fff; border: none; cursor: pointer; transition: all .15s;
+    }
+    .search-go-btn:hover { background: #4338ca; }
+    .search-go-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .search-result-info { font-size: 11px; color: var(--muted2); }
+
     /* ── Filter bar ── */
     .filter-bar {
       flex-shrink: 0; padding: 10px 20px;
@@ -322,9 +352,13 @@
 
 <!-- Topbar -->
 <div class="topbar">
-  <div class="topbar-title">BSE Live Dashboard</div>
+  <div class="topbar-title">BSE Dashboard</div>
+  <div class="mode-tabs">
+    <button class="mode-tab active" id="modeTabLive" onclick="switchMode('live')">Live Feed</button>
+    <button class="mode-tab" id="modeTabCompany" onclick="switchMode('company')">Company Search</button>
+  </div>
   <div class="topbar-sep"></div>
-  <div class="status-dot-wrap">
+  <div class="status-dot-wrap" id="pollerStatus">
     <div class="status-dot" id="statusDot"></div>
     <span id="statusTxt">Stopped</span>
   </div>
@@ -337,6 +371,17 @@
     <button class="icon-btn" onclick="openConfig()" title="Configure">&#9881; Config</button>
     <a href="/" class="back-link">&#8592; Extractor</a>
   </div>
+</div>
+
+<!-- Company search bar (visible only in company mode) -->
+<div class="company-search-bar" id="companySearchBar">
+  <input type="text" id="csScripCode" placeholder="BSE Scrip Code (e.g. 542774)" style="width:180px" />
+  <label style="font-size:11px;color:#666">From</label>
+  <input type="date" id="csFromDate" style="width:140px" />
+  <label style="font-size:11px;color:#666">To</label>
+  <input type="date" id="csToDate" style="width:140px" />
+  <button class="search-go-btn" id="csGoBtn" onclick="runCompanySearch()">Search</button>
+  <span class="search-result-info" id="csResultInfo"></span>
 </div>
 
 <!-- Filter bar -->
@@ -561,6 +606,70 @@ let fSmartCat  = '';
 let fSentiment = '';
 let fStatus    = '';
 let fSearch    = '';
+
+let dashMode = 'live'; // 'live' | 'company'
+
+function switchMode(mode) {
+  dashMode = mode;
+  document.getElementById('modeTabLive').classList.toggle('active', mode === 'live');
+  document.getElementById('modeTabCompany').classList.toggle('active', mode === 'company');
+  document.getElementById('companySearchBar').classList.toggle('visible', mode === 'company');
+  document.getElementById('pollerStatus').style.display = mode === 'live' ? '' : 'none';
+  document.getElementById('pollerBtn').style.display = mode === 'live' ? '' : 'none';
+  document.getElementById('liveBadge').style.display = mode === 'live' ? '' : 'none';
+  document.getElementById('lastPollTxt').style.display = mode === 'live' ? '' : 'none';
+
+  if (mode === 'company') {
+    const today = new Date();
+    const monthAgo = new Date(today); monthAgo.setDate(today.getDate() - 30);
+    document.getElementById('csToDate').value = today.toISOString().split('T')[0];
+    document.getElementById('csFromDate').value = monthAgo.toISOString().split('T')[0];
+  }
+}
+
+async function runCompanySearch() {
+  const scripCode = document.getElementById('csScripCode').value.trim();
+  if (!scripCode) { alert('Enter a BSE Scrip Code'); return; }
+  const from = document.getElementById('csFromDate').value.replace(/-/g, '');
+  const to = document.getElementById('csToDate').value.replace(/-/g, '');
+  if (!from || !to) { alert('Select date range'); return; }
+
+  const cfg = loadConfig();
+  const btn = document.getElementById('csGoBtn');
+  const info = document.getElementById('csResultInfo');
+  btn.disabled = true;
+  btn.textContent = 'Searching...';
+  info.textContent = '';
+
+  try {
+    const resp = await fetch('/api/company-search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scripCode,
+        fromDate: from,
+        toDate: to,
+        apiKey: cfg.apiKey,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Search failed');
+
+    info.textContent = `${data.company || 'Scrip ' + scripCode} — ${data.total} announcements (${data.fromDate} to ${data.toDate})`;
+
+    // Add results to table
+    for (const rec of (data.records || [])) {
+      upsertRecord(rec);
+    }
+  } catch (err) {
+    info.textContent = err.message;
+    info.style.color = '#f87171';
+    setTimeout(() => { info.style.color = ''; }, 5000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Search';
+  }
+}
 
 // ── Config ───────────────────────────────────────────────────────────
 function loadConfig() {

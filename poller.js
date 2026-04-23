@@ -734,6 +734,130 @@ export function startPoller(app, getDefaultCfg) {
     res.json(record);
   });
 
+  // ── Company search — fetch all announcements for a scrip code + date range ──
+  app.post('/api/company-search', async (req, res) => {
+    const { scripCode, fromDate, toDate, apiKey: bodyApiKey } = req.body || {};
+    if (!scripCode) return res.status(400).json({ error: 'scripCode is required' });
+
+    const from = fromDate || bseDateStr(new Date(Date.now() - 30 * 24 * 3600 * 1000));
+    const to = toDate || bseDateStr(new Date());
+
+    try {
+      const url = `https://api.bseindia.com/BseIndiaAPI/api/AnnSubCategoryGetData/w` +
+        `?pageno=1&strCat=-1&strPrevDate=${from}&strScrip=${scripCode}` +
+        `&strSearch=P&strToDate=${to}&strType=C&subcategory=-1`;
+
+      const resp = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Referer': 'https://www.bseindia.com/',
+          'Accept': 'application/json',
+        },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!resp.ok) throw new Error(`BSE API HTTP ${resp.status}`);
+      const text = await resp.text();
+      let data;
+      try { data = JSON.parse(text); }
+      catch { throw new Error('BSE returned non-JSON response'); }
+
+      const items = data?.Table || [];
+      const newRecords = [];
+      const apiKey = bodyApiKey || pollerCfgOverrides.apiKey || process.env.GEMINI_API_KEY;
+      const cfg = { ...pollerCfgOverrides, apiKey };
+
+      for (const item of items) {
+        const newsId = item.NEWSID;
+        if (!newsId) continue;
+
+        if (announcementStore.has(newsId)) {
+          newRecords.push(announcementStore.get(newsId));
+          continue;
+        }
+
+        const pdfUrl = item.ATTACHMENTNAME
+          ? `https://www.bseindia.com/xml-data/corpfiling/AttachLive/${item.ATTACHMENTNAME}`
+          : null;
+
+        const record = {
+          id: newsId,
+          scrip_cd: item.SCRIP_CD || null,
+          company: item.SLONGNAME || '',
+          headline: item.HEADLINE || item.NEWSSUB || '',
+          bse_time: item.DT_TM || item.News_submission_dt || new Date().toISOString(),
+          bse_category: item.CATEGORYNAME || '',
+          bse_subcategory: item.SUBCATNAME || '',
+          pdf_url: pdfUrl,
+          bse_url: item.NSURL || null,
+          attachment_name: item.ATTACHMENTNAME || null,
+          smart_subcategory: null,
+          route: null,
+          status: 'pending',
+          error: null,
+          extracted_headline: null,
+          extracted_summary: null,
+          sentiment: null,
+          extracted: null,
+          _classifier_confidence: null,
+          _classifier_rationale: null,
+          _secondary_events: [],
+          processed_at: null,
+          source: 'company_search',
+        };
+
+        const routing = resolveRoute(record.bse_category, record.bse_subcategory);
+        record.smart_subcategory = routing.smart_subcategory;
+        record.route = routing.route;
+
+        announcementStore.set(newsId, record);
+        seenIds.add(newsId);
+        newRecords.push(record);
+        broadcastDashboard(record);
+      }
+
+      persistAnnouncements();
+
+      // Process new pending records in background
+      const pending = newRecords.filter(r => r.status === 'pending' && r.pdf_url);
+      if (pending.length > 0) {
+        (async () => {
+          const sem = createSemaphore(pollerConcurrency);
+          await Promise.all(pending.map(async (record) => {
+            const release = await sem();
+            try {
+              await processAnnouncement(record, cfg);
+            } catch (err) {
+              record.status = 'error';
+              record.error = err.message;
+              record.processed_at = new Date().toISOString();
+              updateRecord(record);
+            } finally {
+              release();
+            }
+          }));
+        })();
+      }
+
+      res.json({
+        ok: true,
+        total: items.length,
+        company: items[0]?.SLONGNAME || '',
+        scripCode,
+        fromDate: from,
+        toDate: to,
+        records: newRecords.map(r => {
+          const light = { ...r };
+          delete light.extracted;
+          delete light.log;
+          return light;
+        }),
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/poller/start', (req, res) => {
     if (pollerRunning) return res.json({ ok: true, message: 'Poller already running' });
 
