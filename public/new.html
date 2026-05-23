@@ -1,0 +1,1291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BSE Filing Extractor — Simple</title>
+  <style>
+    :root {
+      --bg: #0e0e10; --panel: #18181b; --panel-2: #1f1f23; --border: #2a2a2e;
+      --text: #e4e4e7; --muted: #888; --accent: #818cf8; --accent-2: #6366f1;
+      --green: #4ade80; --amber: #fbbf24; --red: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+           background: var(--bg); color: var(--text); display: flex; min-height: 100vh; }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 320px; flex-shrink: 0; background: #0a0a0c; border-right: 1px solid var(--border);
+      padding: 22px 20px; display: flex; flex-direction: column; gap: 22px; overflow-y: auto;
+    }
+    .sidebar-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .sidebar-head h1 { margin: 0; font-size: 15px; font-weight: 600; }
+    .sidebar-head .pill { font-size: 10px; padding: 2px 8px; border-radius: 999px; background: var(--panel); border: 1px solid var(--border); color: var(--muted); }
+    .sidebar-head a { color: var(--muted); font-size: 11px; text-decoration: none; margin-left: auto; }
+    .sidebar-head a:hover { color: var(--text); }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+    .field select, .field input[type="password"], .field input[type="text"], .field input[type="number"] {
+      background: var(--panel-2); border: 1px solid var(--border); padding: 8px 10px; border-radius: 6px;
+      color: var(--text); font-size: 12px; font-family: inherit;
+    }
+    .field input[type="password"], .field input[type="text"] { font-family: monospace; }
+    .field select:focus, .field input:focus { outline: none; border-color: var(--accent); }
+    .field .hint { font-size: 11px; color: var(--muted); }
+    .field .saved { font-size: 11px; color: var(--green); display: none; }
+
+    .slider-row { display: flex; align-items: center; gap: 10px; }
+    .slider-row input[type="range"] { flex: 1; }
+    .slider-row .val { font-family: monospace; font-size: 12px; min-width: 60px; text-align: right; }
+
+    .pipeline-note {
+      background: rgba(129, 140, 248, 0.05); border: 1px solid rgba(129, 140, 248, 0.2); border-radius: 8px;
+      padding: 12px; font-size: 11px; color: var(--muted); line-height: 1.6;
+    }
+    .pipeline-note strong { color: var(--accent); }
+
+    /* ── Main ── */
+    .main { flex: 1; padding: 32px 40px; overflow-y: auto; }
+    .main-inner { max-width: 760px; margin: 0 auto; }
+
+    .upload-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+
+    .drop {
+      border: 1.5px dashed var(--border); border-radius: 10px; padding: 40px 20px; text-align: center;
+      cursor: pointer; transition: all 0.15s; background: var(--panel-2); position: relative;
+    }
+    .drop:hover, .drop.dragover { border-color: var(--accent); background: rgba(129, 140, 248, 0.05); }
+    .drop input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .drop .icon { font-size: 36px; margin-bottom: 8px; opacity: 0.6; }
+    .drop .text { font-size: 13px; color: var(--muted); }
+    .drop .filename { font-size: 12px; color: var(--accent); margin-top: 8px; }
+
+    .url-row { display: flex; gap: 10px; margin-top: 14px; align-items: center; }
+    .url-row .or { font-size: 11px; color: var(--muted); padding: 0 4px; }
+    .url-row input { flex: 1; background: var(--panel-2); border: 1px solid var(--border); padding: 8px 10px; border-radius: 6px; color: var(--text); font-size: 12px; }
+
+    .extract-btn { width: 100%; margin-top: 16px; padding: 13px; background: var(--accent-2); color: white; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; }
+    .extract-btn:hover:not(:disabled) { background: var(--accent); }
+    .extract-btn:disabled { background: var(--panel-2); color: var(--muted); cursor: not-allowed; }
+
+    .job-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; margin-top: 20px; }
+    .job-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+    .job-head .file { font-size: 13px; font-weight: 600; }
+    .job-head .meta { font-size: 11px; color: var(--muted); }
+    .job-head .status { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); margin-left: auto; }
+    .job-head .status.running { background: rgba(129, 140, 248, 0.1); color: var(--accent); border-color: var(--accent); }
+    .job-head .status.done    { background: rgba(74, 222, 128, 0.1); color: var(--green); border-color: var(--green); }
+    .job-head .status.error   { background: rgba(248, 113, 113, 0.1); color: var(--red); border-color: var(--red); }
+
+    .timeline { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; background: var(--panel-2); border-radius: 8px; font-size: 12px; }
+    .timeline .row { display: flex; align-items: center; gap: 10px; padding: 5px 0; color: var(--muted); }
+    .timeline .row .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
+    @keyframes pulse-dot { 0%, 100% { box-shadow: 0 0 0 0 rgba(129, 140, 248, 0.6); } 50% { box-shadow: 0 0 0 6px rgba(129, 140, 248, 0); } }
+    .timeline .row.active   .dot { background: var(--accent); animation: pulse-dot 1.4s ease-in-out infinite; }
+    .timeline .row.active   { color: var(--text); font-weight: 500; }
+    .timeline .row.done     .dot { background: var(--green); }
+    .timeline .row.done     { color: #aaa; }
+    .timeline .row.error    .dot { background: var(--red); }
+    .timeline .row.error    { color: var(--red); }
+    .timeline .row .ms      { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; }
+    .timeline .row.active .ms { color: var(--accent); font-weight: 600; }
+    .timeline .row.done   .ms { color: var(--green); }
+    .timeline .row.error  .ms { color: var(--red); }
+
+    /* ── Scope toggle + financial tables (ported from advanced UI) ── */
+    .scope-row { padding: 14px 0 6px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .scope-btns { display: flex; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
+    .scope-btn { padding: 4px 12px; font-size: 11px; font-weight: 600; color: #666; background: transparent; border: none; border-radius: 4px; cursor: pointer; }
+    .scope-btn:hover { color: #aaa; }
+    .scope-btn.active { background: var(--accent-2); color: #fff; }
+    .scope-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .scope-note { font-size: 10px; color: #555; }
+
+    .fin-tables { padding: 6px 0 0; display: flex; flex-direction: column; gap: 14px; }
+    .fin-table { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #0f0f11; }
+    .fin-table-head { padding: 8px 12px; background: #16161a; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .fin-table-title { font-size: 12px; font-weight: 700; color: #e2e2e2; display: inline-flex; align-items: center; gap: 6px; }
+    .evidence-badge { font-size: 10px; color: var(--muted); font-weight: 500; cursor: help; padding: 1px 6px; border-radius: 4px; background: var(--panel-2); border: 1px solid var(--border); }
+    .evidence-badge:hover { color: var(--accent); border-color: var(--accent); }
+    .fin-table-sub { font-size: 10px; color: #555; }
+    .fin-table-body { overflow-x: auto; }
+    .fin-table-body table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .fin-table-body th, .fin-table-body td { padding: 6px 10px; border-bottom: 1px solid #1e1e22; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .fin-table-body th { color: #777; font-weight: 600; background: #141417; text-align: right; }
+    .fin-table-body th:first-child, .fin-table-body td:first-child { text-align: left; color: #aaa; }
+    .fin-table-body tr:last-child td { border-bottom: none; }
+    .fin-table-body td.num-pos { color: #86efac; }
+    .fin-table-body td.num-neg { color: #fca5a5; }
+    .fin-table-body td.num-na  { color: #444; }
+    .fin-empty { padding: 14px; text-align: center; font-size: 11px; color: #444; }
+
+    .row-parent { cursor: pointer; user-select: none; }
+    .row-parent:hover { background: #151518; }
+    .row-parent td:first-child { font-weight: 600; color: #e2e2e2; }
+    .fin-caret { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-right: 6px; border-radius: 3px; background: var(--border); color: #aaa; font-size: 11px; font-weight: 700; line-height: 1; }
+    .row-parent:hover .fin-caret { background: var(--accent-2); color: #fff; }
+    .row-child td:first-child { color: #888; font-size: 11px; }
+    .row-child { background: #0c0c0f; }
+
+    .insights-wrap { padding: 14px 0 0; display: flex; flex-direction: column; gap: 8px; }
+    .insights-title { font-size: 11px; font-weight: 700; color: #aaa; text-transform: uppercase; letter-spacing: 0.6px; }
+    .insights-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .insight-card { background: #0f0f11; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+    .insight-key { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .insight-val { font-size: 12px; color: #e2e2e2; line-height: 1.5; word-break: break-word; }
+
+    .integrity-flags { padding: 8px 12px; border: 1px solid #d9770640; background: #1f1610; border-radius: 6px; display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+    .integrity-flags .flag-title { font-size: 11px; color: #fdba74; font-weight: 700; margin-bottom: 2px; }
+    .integrity-flags .flag-item  { font-size: 10px; color: #fca5a5; }
+
+    .classifier { display: flex; gap: 8px; align-items: center; margin: 14px 0 8px; flex-wrap: wrap; }
+    .chip { font-size: 11px; padding: 3px 9px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); }
+    .chip.cat   { background: rgba(129, 140, 248, 0.1); color: var(--accent); border-color: var(--accent); font-weight: 600; }
+    .chip.conf-hi  { background: rgba(74, 222, 128, 0.1);  color: var(--green); border-color: var(--green); }
+    .chip.conf-mid { background: rgba(251, 191, 36, 0.1);  color: var(--amber); border-color: var(--amber); }
+    .chip.conf-lo  { background: rgba(248, 113, 113, 0.1); color: var(--red);   border-color: var(--red); }
+    .chip.sec   { background: var(--panel-2); color: var(--muted); }
+    .chip.sent-positive { background: rgba(74, 222, 128, 0.1); color: var(--green); border-color: var(--green); }
+    .chip.sent-neutral  { background: var(--panel-2); color: var(--muted); }
+    .chip.sent-negative { background: rgba(248, 113, 113, 0.1); color: var(--red); border-color: var(--red); }
+    .rationale { font-size: 12px; color: var(--muted); margin: 6px 0 14px; line-height: 1.5; }
+
+    .headline { font-size: 16px; font-weight: 600; margin: 14px 0 8px; line-height: 1.4; }
+    .summary  { font-size: 13px; color: #c9c9cd; line-height: 1.65; margin: 0 0 18px; }
+
+    details { margin-top: 12px; background: var(--panel-2); border-radius: 8px; }
+    details summary { cursor: pointer; padding: 10px 14px; font-size: 12px; color: var(--muted); user-select: none; }
+    details summary:hover { color: var(--text); }
+    details[open] summary { color: var(--text); border-bottom: 1px solid var(--border); }
+    details pre { margin: 0; padding: 12px 14px; overflow-x: auto; font-size: 11px; line-height: 1.5; max-height: 500px; overflow-y: auto; }
+
+    .tokens { display: flex; gap: 16px; padding: 10px 14px; background: var(--panel-2); border-radius: 8px; margin: 12px 0; font-size: 11px; flex-wrap: wrap; }
+    .tokens .item { display: flex; flex-direction: column; gap: 2px; }
+    .tokens .lbl { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; }
+    .tokens .val { font-family: monospace; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    .error-box { background: rgba(248, 113, 113, 0.08); border: 1px solid rgba(248, 113, 113, 0.4); border-radius: 8px; padding: 12px 14px; font-size: 12px; color: #fca5a5; line-height: 1.5; margin-top: 10px; }
+  </style>
+</head>
+<body>
+
+<!-- ─── Sidebar ─── -->
+<div class="sidebar">
+  <div class="sidebar-head">
+    <h1>BSE Extractor</h1>
+    <span class="pill">Simple</span>
+    <a href="/">advanced →</a>
+  </div>
+
+  <div class="field">
+    <label>Provider</label>
+    <select id="provider">
+      <option value="gemini">Gemini</option>
+      <option value="openai">OpenAI</option>
+    </select>
+  </div>
+
+  <div class="field" id="geminiModelField">
+    <label>Gemini Model</label>
+    <select id="geminiModel">
+      <optgroup label="Flash">
+        <option value="gemini-3.1-flash-lite-preview" selected>gemini-3.1-flash-lite-preview</option>
+        <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+        <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+        <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+      </optgroup>
+      <optgroup label="Pro">
+        <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+        <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+      </optgroup>
+    </select>
+  </div>
+
+  <div class="field" id="openaiModelField" style="display:none">
+    <label>OpenAI Model</label>
+    <select id="openaiModel">
+      <optgroup label="GPT-4.1 (recommended)">
+        <option value="gpt-4.1-mini" selected>gpt-4.1-mini</option>
+        <option value="gpt-4.1">gpt-4.1</option>
+        <option value="gpt-4.1-nano">gpt-4.1-nano</option>
+      </optgroup>
+      <optgroup label="GPT-4o">
+        <option value="gpt-4o-mini">gpt-4o-mini</option>
+        <option value="gpt-4o">gpt-4o</option>
+      </optgroup>
+      <optgroup label="Reasoning (o-series)">
+        <option value="o4-mini">o4-mini</option>
+        <option value="o3-mini">o3-mini</option>
+      </optgroup>
+    </select>
+  </div>
+
+  <div class="field" id="geminiKeyField">
+    <label>Gemini API Key</label>
+    <input type="password" id="geminiApiKey" placeholder="AIza…" autocomplete="off" />
+    <span class="saved" id="geminiSaved">✓ Saved to local storage</span>
+  </div>
+
+  <div class="field" id="openaiKeyField" style="display:none">
+    <label>OpenAI API Key</label>
+    <input type="password" id="openaiApiKey" placeholder="sk-…" autocomplete="off" />
+    <span class="saved" id="openaiSaved">✓ Saved to local storage</span>
+  </div>
+
+  <div class="field">
+    <label>Max Output Tokens</label>
+    <div class="slider-row">
+      <input type="range" id="maxTokens" min="1024" max="65536" step="1024" />
+      <span class="val" id="maxTokensVal">—</span>
+    </div>
+    <span class="hint" id="maxTokensHint">Step 2 output ceiling</span>
+  </div>
+
+  <div class="pipeline-note">
+    <strong>Pipeline</strong><br/>
+    Step 1 — first 5 pages as text → classify<br/>
+    Step 2 — full PDF as base64 → extract structured data<br/>
+    No other knobs. No experimentation.
+  </div>
+</div>
+
+<!-- ─── Main ─── -->
+<div class="main">
+  <div class="main-inner">
+
+    <div class="upload-card">
+      <div class="drop" id="drop">
+        <input type="file" id="fileInput" accept=".pdf" />
+        <div class="icon">📄</div>
+        <div class="text">Drop a PDF here, or click to browse</div>
+        <div class="filename" id="fname"></div>
+      </div>
+
+      <div class="url-row">
+        <span class="or">— or —</span>
+        <input type="text" id="urlInput" placeholder="https://…/filing.pdf" />
+      </div>
+
+      <button class="extract-btn" id="extractBtn" disabled>Extract →</button>
+    </div>
+
+    <div id="jobs"></div>
+
+  </div>
+</div>
+
+<script>
+const STORAGE_KEY = 'bse_simple_v2';
+
+// Per-provider defaults — exactly what the user asked for.
+const PROVIDER_DEFAULTS = {
+  gemini: { model: 'gemini-3.1-flash-lite-preview', maxTokens: 65536, capMaxTokens: 65536 },
+  openai: { model: 'gpt-4.1-mini',                   maxTokens: 32768, capMaxTokens: 65536 },
+};
+
+let state = {
+  provider: 'gemini',
+  geminiModel: PROVIDER_DEFAULTS.gemini.model,
+  openaiModel: PROVIDER_DEFAULTS.openai.model,
+  geminiApiKey: '',
+  openaiApiKey: '',
+  maxTokensByProvider: { gemini: PROVIDER_DEFAULTS.gemini.maxTokens, openai: PROVIDER_DEFAULTS.openai.maxTokens },
+};
+
+function loadState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    state = { ...state, ...saved };
+    state.maxTokensByProvider = { ...state.maxTokensByProvider, ...(saved.maxTokensByProvider || {}) };
+  } catch {}
+}
+function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+const el = (id) => document.getElementById(id);
+const provider     = el('provider');
+const geminiModel  = el('geminiModel');
+const openaiModel  = el('openaiModel');
+const geminiApiKey = el('geminiApiKey');
+const openaiApiKey = el('openaiApiKey');
+const maxTokens    = el('maxTokens');
+const maxTokensVal = el('maxTokensVal');
+
+function applyState() {
+  provider.value     = state.provider;
+  geminiModel.value  = state.geminiModel;
+  openaiModel.value  = state.openaiModel;
+  geminiApiKey.value = state.geminiApiKey;
+  openaiApiKey.value = state.openaiApiKey;
+  syncProviderUI();
+  syncMaxTokens();
+}
+
+function syncProviderUI() {
+  const isGemini = state.provider === 'gemini';
+  el('geminiModelField').style.display = isGemini ? '' : 'none';
+  el('openaiModelField').style.display = isGemini ? 'none' : '';
+  el('geminiKeyField').style.display   = isGemini ? '' : 'none';
+  el('openaiKeyField').style.display   = isGemini ? 'none' : '';
+}
+
+function syncMaxTokens() {
+  const cap = PROVIDER_DEFAULTS[state.provider].capMaxTokens;
+  maxTokens.max = cap;
+  let v = state.maxTokensByProvider[state.provider];
+  if (!v || v > cap) v = PROVIDER_DEFAULTS[state.provider].maxTokens;
+  maxTokens.value = v;
+  maxTokensVal.textContent = Number(v).toLocaleString();
+  state.maxTokensByProvider[state.provider] = v;
+}
+
+function flashSaved(id) {
+  const b = el(id);
+  if (!b) return;
+  b.style.display = 'inline'; setTimeout(() => b.style.display = 'none', 1500);
+}
+
+provider.addEventListener('change', () => {
+  state.provider = provider.value;
+  saveState();
+  syncProviderUI();
+  syncMaxTokens();
+  updateExtractButton();
+});
+geminiModel.addEventListener('change', () => { state.geminiModel = geminiModel.value; saveState(); });
+openaiModel.addEventListener('change', () => { state.openaiModel = openaiModel.value; saveState(); });
+
+geminiApiKey.addEventListener('input', () => {
+  state.geminiApiKey = geminiApiKey.value.trim();
+  saveState(); flashSaved('geminiSaved'); updateExtractButton();
+});
+openaiApiKey.addEventListener('input', () => {
+  state.openaiApiKey = openaiApiKey.value.trim();
+  saveState(); flashSaved('openaiSaved'); updateExtractButton();
+});
+
+maxTokens.addEventListener('input', () => {
+  state.maxTokensByProvider[state.provider] = parseInt(maxTokens.value);
+  maxTokensVal.textContent = Number(maxTokens.value).toLocaleString();
+});
+maxTokens.addEventListener('change', saveState);
+
+loadState();
+applyState();
+
+// ── Upload + URL inputs ──
+const fileInput = el('fileInput');
+const urlInput  = el('urlInput');
+const drop      = el('drop');
+const extractBtn = el('extractBtn');
+const fname     = el('fname');
+let selectedFile = null;
+
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('dragover'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+drop.addEventListener('drop', (e) => {
+  e.preventDefault(); drop.classList.remove('dragover');
+  if (e.dataTransfer.files?.length) {
+    fileInput.files = e.dataTransfer.files;
+    onFileChange();
+  }
+});
+fileInput.addEventListener('change', onFileChange);
+urlInput.addEventListener('input', updateExtractButton);
+
+function onFileChange() {
+  selectedFile = fileInput.files[0] || null;
+  fname.textContent = selectedFile ? selectedFile.name : '';
+  if (selectedFile) urlInput.value = '';
+  updateExtractButton();
+}
+
+function activeApiKey() {
+  return state.provider === 'gemini' ? state.geminiApiKey : state.openaiApiKey;
+}
+
+function updateExtractButton() {
+  const hasKey   = !!activeApiKey();
+  const hasInput = !!selectedFile || !!urlInput.value.trim();
+  extractBtn.disabled = !hasKey || !hasInput;
+}
+updateExtractButton();
+
+extractBtn.addEventListener('click', startJob);
+
+// ── Pipeline ──
+const STAGES = [
+  { id: 'downloading',  label: 'Download PDF (if URL)' },
+  { id: 'extract_s1',   label: 'Step 1 · Extract first 5 pages (text)' },
+  { id: 'classify',     label: 'Step 1 · Classify filing' },
+  { id: 'extract_s2',   label: 'Step 2 · Encode full PDF (base64)' },
+  { id: 'extract_data', label: 'Step 2 · Extract structured data' },
+];
+
+// Track running stages so we can show a live elapsed timer.
+const stageRunning = {}; // { `${cardId}::${stageId}`: { start, intervalId } }
+function tickerKey(cardId, stageId) { return `${cardId}::${stageId}`; }
+function startStageTicker(cardId, stageId) {
+  const key = tickerKey(cardId, stageId);
+  if (stageRunning[key]) return; // already ticking
+  const start = Date.now();
+  const intervalId = setInterval(() => {
+    const m = el(`${cardId}-ms-${stageId}`);
+    if (m) m.textContent = fmtMs(Date.now() - start);
+  }, 100);
+  stageRunning[key] = { start, intervalId };
+  // Render immediately so the user sees 0ms before the first interval tick.
+  const m = el(`${cardId}-ms-${stageId}`);
+  if (m) m.textContent = '0ms';
+}
+function stopStageTicker(cardId, stageId, finalMs) {
+  const key = tickerKey(cardId, stageId);
+  const r = stageRunning[key];
+  if (!r) return;
+  clearInterval(r.intervalId);
+  delete stageRunning[key];
+  const m = el(`${cardId}-ms-${stageId}`);
+  if (m) m.textContent = fmtMs(finalMs != null ? finalMs : (Date.now() - r.start));
+}
+
+const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const fmtMs = (ms) => ms < 1000 ? `${ms}ms` : `${(ms/1000).toFixed(1)}s`;
+const confChipClass = (n) => n >= 90 ? 'conf-hi' : n >= 70 ? 'conf-mid' : 'conf-lo';
+const providerLabel = () => state.provider === 'openai' ? 'OpenAI' : 'Gemini';
+const activeModel   = () => state.provider === 'openai' ? state.openaiModel : state.geminiModel;
+
+async function startJob() {
+  const apiKey = activeApiKey();
+  if (!apiKey) return alert(`Enter your ${providerLabel()} API key.`);
+
+  const url = urlInput.value.trim();
+  if (!selectedFile && !url) return alert('Add a PDF or URL.');
+
+  const label = selectedFile?.name || (url.split('/').pop() || 'document.pdf');
+  const cardId = 'job-' + Date.now();
+  const card = createJobCard(cardId, label);
+  el('jobs').prepend(card);
+
+  extractBtn.disabled = true;
+
+  // Build the request payload — match server expectations.
+  const cfgPayload = {
+    provider: state.provider,
+    maxTokens: parseInt(maxTokens.value),
+  };
+  if (state.provider === 'gemini') {
+    cfgPayload.apiKey = state.geminiApiKey;
+    cfgPayload.model  = state.geminiModel;
+  } else {
+    cfgPayload.openaiApiKey = state.openaiApiKey;
+    cfgPayload.openaiModel  = state.openaiModel;
+  }
+
+  const formData = new FormData();
+  formData.append('config', JSON.stringify(cfgPayload));
+  if (selectedFile) formData.append('file', selectedFile);
+  else formData.append('url', url);
+
+  let requestId;
+  try {
+    const r = await fetch('/process-simplified', { method: 'POST', body: formData });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    requestId = d.requestId;
+  } catch (err) {
+    setStatus(cardId, 'error', 'Error');
+    appendError(cardId, err.message);
+    extractBtn.disabled = false;
+    updateExtractButton();
+    return;
+  }
+
+  // Reset input only after request was accepted.
+  selectedFile = null; fileInput.value = ''; urlInput.value = ''; fname.textContent = '';
+  updateExtractButton();
+
+  subscribeToStream(cardId, requestId);
+}
+
+function createJobCard(cardId, label) {
+  const node = document.createElement('div');
+  node.className = 'job-card'; node.id = cardId;
+  node.innerHTML = `
+    <div class="job-head">
+      <span class="file">${escapeHtml(label)}</span>
+      <span class="meta">${escapeHtml(providerLabel())} · ${escapeHtml(activeModel())}</span>
+      <span class="status running" id="${cardId}-status">Running</span>
+    </div>
+    <div class="timeline" id="${cardId}-timeline">
+      ${STAGES.map(s => `<div class="row" id="${cardId}-stage-${s.id}"><div class="dot"></div><span>${s.label}</span><span class="ms" id="${cardId}-ms-${s.id}"></span></div>`).join('')}
+    </div>
+    <div id="${cardId}-result" style="display:none;"></div>
+    <div id="${cardId}-errors"></div>
+  `;
+  return node;
+}
+
+function setStatus(cardId, cls, label) {
+  const e = el(`${cardId}-status`); if (!e) return;
+  e.className = `status ${cls}`; e.textContent = label;
+}
+function setStageState(cardId, id, state, ms) {
+  const row = el(`${cardId}-stage-${id}`); if (!row) return;
+  const wasActive = row.classList.contains('active');
+  row.classList.remove('active','done','error');
+  if (state) row.classList.add(state);
+
+  if (state === 'active') {
+    startStageTicker(cardId, id);
+  } else if (state === 'done' || state === 'error') {
+    stopStageTicker(cardId, id, ms);
+    if (ms != null) {
+      // setTextContent above may have been overwritten — re-set with the authoritative ms.
+      const m = el(`${cardId}-ms-${id}`); if (m) m.textContent = fmtMs(ms);
+    }
+  } else if (!state && wasActive) {
+    stopStageTicker(cardId, id);
+  }
+}
+function appendError(cardId, message) {
+  const box = el(`${cardId}-errors`); if (!box) return;
+  const div = document.createElement('div');
+  div.className = 'error-box'; div.textContent = message;
+  box.appendChild(div);
+}
+
+function subscribeToStream(cardId, requestId) {
+  const es = new EventSource(`/stream/${requestId}`);
+  const tokens = { step1: null, step2: null };
+
+  es.addEventListener('stage', (e) => {
+    const { stage, step } = JSON.parse(e.data);
+    let id = null;
+    if (stage === 'downloading') id = 'downloading';
+    else if (step === 'step1' && stage === 'extracting') id = 'extract_s1';
+    else if (step === 'step1' && stage === 'extracted')  id = 'extract_s1';
+    else if (step === 'step1' && stage === 'calling_api') id = 'classify';
+    else if (step === 'step2' && stage === 'extracting') id = 'extract_s2';
+    else if (step === 'step2' && stage === 'extracted')  id = 'extract_s2';
+    else if (step === 'step2' && stage === 'calling_api') id = 'extract_data';
+    if (!id) return;
+    setStageState(cardId, id, stage === 'extracted' ? 'done' : 'active');
+  });
+
+  es.addEventListener('attempt_done', (e) => {
+    const { success, step, ms } = JSON.parse(e.data);
+    if (!success) return;
+    if (step === 'step1') setStageState(cardId, 'classify',     'done', ms);
+    if (step === 'step2') setStageState(cardId, 'extract_data', 'done', ms);
+  });
+
+  es.addEventListener('tokens', (e) => {
+    const { input, output, total, step } = JSON.parse(e.data);
+    tokens[step] = { input, output, total };
+  });
+
+  es.addEventListener('classification', (e) => {
+    showClassification(cardId, JSON.parse(e.data));
+  });
+
+  es.addEventListener('done', (e) => {
+    const { result } = JSON.parse(e.data);
+    STAGES.forEach(s => {
+      const r = el(`${cardId}-stage-${s.id}`);
+      if (r && !r.classList.contains('done') && !r.classList.contains('error')) setStageState(cardId, s.id, 'done');
+    });
+    showResult(cardId, result, tokens);
+    setStatus(cardId, 'done', 'Done');
+    es.close();
+    extractBtn.disabled = false;
+    updateExtractButton();
+  });
+
+  es.addEventListener('fail', (e) => {
+    let payload = {}; try { payload = JSON.parse(e.data); } catch {}
+    const message = payload.message || 'Failed';
+    if (payload.classification) showClassification(cardId, payload.classification);
+    STAGES.forEach(s => {
+      const r = el(`${cardId}-stage-${s.id}`);
+      if (r && r.classList.contains('active')) setStageState(cardId, s.id, 'error');
+    });
+    appendError(cardId, message);
+    setStatus(cardId, 'error', 'Error');
+    es.close();
+    extractBtn.disabled = false;
+    updateExtractButton();
+  });
+
+  es.addEventListener('error', () => {
+    setStatus(cardId, 'error', 'Connection lost');
+    es.close();
+    extractBtn.disabled = false;
+    updateExtractButton();
+  });
+}
+
+function showClassification(cardId, c) {
+  const box = el(`${cardId}-result`);
+  box.style.display = 'block';
+  if (el(`${cardId}-classifier`)) return;
+  const conf = typeof c.confidence === 'number' ? c.confidence : 0;
+  const secondary = (c.secondary_events || []).map(s => `<span class="chip sec">+ ${escapeHtml(s)}</span>`).join('');
+  const div = document.createElement('div');
+  div.id = `${cardId}-classifier`;
+  div.innerHTML = `
+    <div class="classifier">
+      <span class="chip cat">${escapeHtml(c.smart_subcategory || '—')}</span>
+      <span class="chip ${confChipClass(conf)}">${conf}/100</span>
+      ${secondary}
+    </div>
+    <div class="rationale">${escapeHtml(c.rationale || '')}</div>
+  `;
+  box.appendChild(div);
+}
+
+function showResult(cardId, result, tokens) {
+  const box = el(`${cardId}-result`);
+  box.style.display = 'block';
+
+  const sentiment = result.sentiment;
+  const sLabel = sentiment?.label || (typeof sentiment === 'string' ? sentiment : null);
+  const sentimentChip = sLabel
+    ? `<span class="chip sent-${String(sLabel).toLowerCase()}" title="${escapeHtml(sentiment?.rationale || '')}">${escapeHtml(sLabel)}${typeof sentiment?.score === 'number' ? ' · ' + sentiment.score : ''}</span>`
+    : '';
+
+  const meta = result._step1_pages_used && result._step1_total_pages
+    ? `<span class="chip">Step 1 read ${result._step1_pages_used}/${result._step1_total_pages} pages</span>`
+    : '';
+
+  // Unit-detection chips — surface what the LLM declared per statement and what the server converted.
+  let unitChips = '';
+  if (result._unit_detection?.declaration) {
+    const d = result._unit_detection.declaration;
+    const interesting = Object.entries(d).filter(([_, v]) => v && v !== 'crores');
+    if (interesting.length) {
+      unitChips = interesting.map(([block, unit]) =>
+        `<span class="chip" title="Server converted ${block} from ${unit} to ₹ Cr">${escapeHtml(block)}: ${escapeHtml(unit)} → Cr</span>`
+      ).join('');
+    } else if (Object.values(d).some(v => v === 'crores')) {
+      unitChips = `<span class="chip" title="All statements in this filing were already in ₹ Cr">all in ₹ Cr</span>`;
+    }
+  }
+
+  const tokenBlock = (tokens.step1 || tokens.step2)
+    ? `<div class="tokens">
+        ${tokens.step1 ? `<div class="item"><span class="lbl">Step 1 tokens</span><span class="val">${tokens.step1.total.toLocaleString()}</span></div>` : ''}
+        ${tokens.step2 ? `<div class="item"><span class="lbl">Step 2 tokens</span><span class="val">${tokens.step2.total.toLocaleString()}</span></div>` : ''}
+        ${tokens.step1 && tokens.step2 ? `<div class="item"><span class="lbl">Combined</span><span class="val">${(tokens.step1.total + tokens.step2.total).toLocaleString()}</span></div>` : ''}
+      </div>`
+    : '';
+
+  const div = document.createElement('div');
+  div.innerHTML = `
+    ${(sentimentChip || meta || unitChips) ? `<div class="classifier">${sentimentChip}${meta}${unitChips}</div>` : ''}
+    ${result.headline ? `<div class="headline">${escapeHtml(result.headline)}</div>` : ''}
+    ${result.summary  ? `<p class="summary">${escapeHtml(result.summary)}</p>` : ''}
+    ${tokenBlock}
+    <div class="scope-row" id="${cardId}-scope-row" style="display:none">
+      <div class="scope-btns" id="${cardId}-scope-btns"></div>
+      <span class="scope-note" id="${cardId}-scope-note"></span>
+    </div>
+    <div class="fin-tables" id="${cardId}-fin-tables"></div>
+    <div class="insights-wrap" id="${cardId}-insights"></div>
+    <details><summary>Raw JSON (${Object.keys(result).length} top-level keys)</summary><pre id="${cardId}-json-pre">${escapeHtml(JSON.stringify(result, null, 2))}</pre></details>
+  `;
+  box.appendChild(div);
+
+  // Render financial tables only when there's structured data to show.
+  if (result.smart_subcategory_specific) {
+    cardResults[cardId] = result;
+    renderFinancialTables(cardId);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  FINANCIAL TABLES (ported verbatim from advanced UI)
+// ─────────────────────────────────────────────────────────────────
+const cardResults = {};
+const cardScope = {};
+
+function renderFinancialTables(cardId) {
+  const result = cardResults[cardId];
+  const spec = result.smart_subcategory_specific || {};
+
+  const availableScopes = new Set();
+  ['pnl_by_period','balance_sheet_by_period','cash_flow_by_period','ratios_by_period','revenue_mix_by_period'].forEach(k => {
+    (spec[k] || []).forEach(e => { if (e?.scope) availableScopes.add(e.scope); });
+  });
+  (spec.banking_nbfc_specific?.bank_specific?.entries || []).forEach(e => { if (e?.scope) availableScopes.add(e.scope); });
+  (spec.banking_nbfc_specific?.nbfc_hfc_specific?.entries || []).forEach(e => { if (e?.scope) availableScopes.add(e.scope); });
+
+  const scopes = Array.from(availableScopes);
+  const defaultScope = scopes.includes('consolidated') ? 'consolidated' : (scopes[0] || 'standalone');
+  cardScope[cardId] = cardScope[cardId] || defaultScope;
+
+  const scopeRow = el(`${cardId}-scope-row`);
+  if (scopes.length === 0) { scopeRow.style.display = 'none'; }
+  else {
+    scopeRow.style.display = 'flex';
+    el(`${cardId}-scope-btns`).innerHTML = ['standalone','consolidated'].map(sc =>
+      `<button class="scope-btn ${cardScope[cardId] === sc ? 'active' : ''}" ${scopes.includes(sc) ? '' : 'disabled'} onclick="setScope('${cardId}','${sc}')">${sc}</button>`
+    ).join('');
+    el(`${cardId}-scope-note`).textContent = scopes.length === 2
+      ? 'Both scopes available — toggle to compare.'
+      : `Only ${scopes[0]} disclosed in this filing.`;
+  }
+
+  renderTablesForScope(cardId);
+}
+
+function setScope(cardId, sc) {
+  cardScope[cardId] = sc;
+  el(`${cardId}-scope-btns`).querySelectorAll('.scope-btn').forEach(b =>
+    b.classList.toggle('active', b.textContent.trim() === sc));
+  renderTablesForScope(cardId);
+}
+
+function renderTablesForScope(cardId) {
+  const scope = cardScope[cardId];
+  const result = cardResults[cardId];
+  const spec = result?.smart_subcategory_specific || {};
+  const wrap = el(`${cardId}-fin-tables`);
+
+  const pnlAll = (spec.pnl_by_period || []).filter(e => e.scope === scope);
+  const quarterlyEntry = pickLatest(pnlAll, ['Q4','Q3','Q2','Q1']);
+  const annualEntry    = pickLatest(pnlAll, ['FY','9M','H1','H2']);
+
+  const balanceEntry  = latest((spec.balance_sheet_by_period || []).filter(e => e.scope === scope));
+  const cashFlowEntry = latest((spec.cash_flow_by_period  || []).filter(e => e.scope === scope));
+  const ratiosEntry   = latest((spec.ratios_by_period     || []).filter(e => e.scope === scope));
+  const revMixEntry   = latest((spec.revenue_mix_by_period|| []).filter(e => e.scope === scope));
+
+  const sectorCls = spec.period_info?.sector_classification;
+  const isBanksOrInsurance = ['bank','nbfc','hfc','insurance_life','insurance_general','amc'].includes(sectorCls);
+  const isInsuranceLife    = sectorCls === 'insurance_life';
+  const isInsuranceGeneral = sectorCls === 'insurance_general';
+  const isBanks = isBanksOrInsurance;
+  const bankEntry = ['bank','nbfc','hfc','amc'].includes(sectorCls)
+    ? latest((spec.banking_nbfc_specific?.bank_specific?.entries || []).filter(e => e.scope === scope))
+    : null;
+  const nbfcEntry = ['bank','nbfc','hfc','amc'].includes(sectorCls)
+    ? latest((spec.banking_nbfc_specific?.nbfc_hfc_specific?.entries || []).filter(e => e.scope === scope))
+    : null;
+  const lifeEntry = isInsuranceLife
+    ? latest((spec.insurance_specific?.life_specific?.entries || []).filter(e => e.scope === scope))
+    : null;
+  const genInsEntry = isInsuranceGeneral
+    ? latest((spec.insurance_specific?.general_specific?.entries || []).filter(e => e.scope === scope))
+    : null;
+
+  wrap.innerHTML = '';
+  wrap.appendChild(buildTable('Quarterly result', quarterlyEntry?.period_label, pnlRows(quarterlyEntry, isBanks), { evidence: quarterlyEntry?._pdf_evidence }));
+  wrap.appendChild(buildTable('Profit & Loss',    annualEntry?.period_label,    pnlRows(annualEntry, isBanks),    { evidence: annualEntry?._pdf_evidence }));
+  if (bankEntry)   wrap.appendChild(buildTable('Banking metrics', bankEntry.period_label, bankRows(bankEntry)));
+  if (nbfcEntry)   wrap.appendChild(buildTable('NBFC / HFC metrics', nbfcEntry.period_label, nbfcRows(nbfcEntry)));
+  if (lifeEntry)   wrap.appendChild(buildTable('Life insurance metrics', lifeEntry.period_label, lifeInsuranceRows(lifeEntry)));
+  if (genInsEntry) wrap.appendChild(buildTable('General insurance metrics', genInsEntry.period_label, generalInsuranceRows(genInsEntry)));
+  wrap.appendChild(buildTable('Balance sheet', balanceEntry?.period_label || balanceEntry?.as_of_date, balanceRows(balanceEntry), { evidence: balanceEntry?._pdf_evidence }));
+  wrap.appendChild(buildTable('Cash flow',     cashFlowEntry?.period_label, cashFlowRows(cashFlowEntry), { evidence: cashFlowEntry?._pdf_evidence }));
+  wrap.appendChild(buildTable('Ratios',        annualEntry?.period_label || ratiosEntry?.period_label, ratiosRows(ratiosEntry, annualEntry, balanceEntry)));
+  wrap.appendChild(buildTable('Shareholding',  spec.shareholding_pattern?.as_of_date, shareholdingRows(spec.shareholding_pattern)));
+  wrap.appendChild(buildTable('Revenue mix',   revMixEntry?.period_label, revenueMixRows(revMixEntry)));
+
+  renderInsights(cardId, spec);
+}
+
+function latest(arr) { return (!arr || !arr.length) ? null : arr[0]; }
+function pickLatest(arr, prefixes) {
+  if (!arr || !arr.length) return null;
+  for (const pre of prefixes) {
+    const hit = arr.find(e => (e.period_label || '').toUpperCase().startsWith(pre));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function buildTable(title, periodLabel, rows, opts = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'fin-table';
+  const cleaned = cleanRowTree(rows || []);
+  const evidence = opts.evidence || null;
+  const evidenceBadge = evidence
+    ? `<span class="evidence-badge" title="${escapeHtml(evidence)}">📄 source</span>`
+    : '';
+  if (!cleaned.length) {
+    wrap.innerHTML = `
+      <div class="fin-table-head">
+        <div class="fin-table-title">${escapeHtml(title)} ${evidenceBadge}</div>
+        <div class="fin-table-sub">${escapeHtml(periodLabel || '')}</div>
+      </div>
+      <div class="fin-empty">Not disclosed in this filing.</div>`;
+    return wrap;
+  }
+  const flat = flattenRowTree(cleaned);
+  const bodyRows = flat.map(renderFinRow).join('');
+  wrap.innerHTML = `
+    <div class="fin-table-head">
+      <div class="fin-table-title">${escapeHtml(title)} ${evidenceBadge}</div>
+      <div class="fin-table-sub">${escapeHtml(periodLabel || '')}</div>
+    </div>
+    <div class="fin-table-body"><table>
+      <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table></div>`;
+  return wrap;
+}
+
+function cleanRowTree(rows) {
+  const out = [];
+  for (const r of rows) {
+    if (!r) continue;
+    if (Array.isArray(r)) { if (r[1] != null && r[1] !== '') out.push(r); }
+    else { const kids = cleanRowTree(r.children || []); if (r.value != null || kids.length) out.push({ label: r.label, value: r.value, children: kids }); }
+  }
+  return out;
+}
+function flattenRowTree(rows, parentId = null, depth = 0, out = []) {
+  for (const r of rows) {
+    if (Array.isArray(r)) out.push({ label: r[0], value: r[1], parentId, depth, isParent: false });
+    else if (r.children && r.children.length) {
+      const id = 'g-' + Math.random().toString(36).slice(2, 9);
+      out.push({ id, label: r.label, value: r.value, parentId, depth, isParent: true });
+      flattenRowTree(r.children, id, depth + 1, out);
+    } else { out.push({ label: r.label, value: r.value, parentId, depth, isParent: false }); }
+  }
+  return out;
+}
+function renderFinRow(r) {
+  const hidden = r.parentId != null ? ' style="display:none"' : '';
+  const indent = 10 + r.depth * 20;
+  const parentAttr = r.parentId ? ` data-parent="${r.parentId}"` : '';
+  const idAttr = r.id ? ` data-group-id="${r.id}"` : '';
+  const cls = r.isParent ? 'row-parent' : (r.depth > 0 ? 'row-child' : '');
+  const onClick = r.isParent ? ` onclick="toggleGroupRow(this, '${r.id}')"` : '';
+  const labelHtml = r.isParent
+    ? `<span class="fin-caret" data-caret="${r.id}">+</span>${escapeHtml(r.label)}`
+    : escapeHtml(r.label);
+  return `<tr class="${cls}"${parentAttr}${idAttr}${onClick}${hidden}>
+    <td style="padding-left:${indent}px">${labelHtml}</td>
+    <td class="${numClass(r.value)}">${formatVal(r.value)}</td>
+  </tr>`;
+}
+function toggleGroupRow(parentEl, groupId) {
+  const tbody = parentEl.parentElement;
+  const caret = parentEl.querySelector(`[data-caret="${groupId}"]`);
+  const direct = tbody.querySelectorAll(`tr[data-parent="${groupId}"]`);
+  if (!direct.length) return;
+  const isOpen = direct[0].style.display !== 'none';
+  if (isOpen) { collapseGroup(tbody, groupId); if (caret) caret.textContent = '+'; }
+  else { direct.forEach(tr => tr.style.display = ''); if (caret) caret.textContent = '−'; }
+}
+function collapseGroup(tbody, groupId) {
+  const direct = tbody.querySelectorAll(`tr[data-parent="${groupId}"]`);
+  direct.forEach(tr => {
+    tr.style.display = 'none';
+    const childGroupId = tr.dataset.groupId;
+    if (childGroupId) {
+      const childCaret = tr.querySelector(`[data-caret="${childGroupId}"]`);
+      if (childCaret) childCaret.textContent = '+';
+      collapseGroup(tbody, childGroupId);
+    }
+  });
+}
+function numClass(v) {
+  if (v == null || v === '') return 'num-na';
+  const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[, %]/g, ''));
+  if (Number.isNaN(n)) return '';
+  if (n > 0) return 'num-pos';
+  if (n < 0) return 'num-neg';
+  return '';
+}
+function formatVal(v) {
+  if (v == null || v === '') return '—';
+  if (typeof v === 'number') return v.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  return escapeHtml(String(v));
+}
+
+function pnlRows(e, isBanks) {
+  if (!e) return [];
+  if (isBanks) {
+    return [
+      ['Net profit (₹ Cr)', e.net_profit],
+      ['PBT (₹ Cr)',        e.profit_before_tax],
+      ['EPS basic (₹)',     e.eps_basic],
+      ['EPS diluted (₹)',   e.eps_diluted],
+    ];
+  }
+  const br = e.expense_breakdown || {};
+  const oi = e.other_income_breakdown || {};
+  const r2 = n => (n == null ? null : Math.round(n * 100) / 100);
+  const opEx = (e.total_expenses != null && e.interest != null && e.depreciation != null)
+    ? r2(e.total_expenses - e.interest - e.depreciation) : null;
+  const opProfit = (e.sales != null && opEx != null) ? r2(e.sales - opEx) : null;
+  const opm = (opProfit != null && e.sales) ? r2((opProfit / e.sales) * 100) : null;
+  const taxPct = (e.profit_before_tax && e.tax_amount != null) ? r2((e.tax_amount / e.profit_before_tax) * 100) : null;
+  const opExChildren = [
+    ['Material cost',                br.material_cost],
+    ['Purchases of stock-in-trade',  br.purchases_of_stock_in_trade],
+    ['Changes in inventories',       br.changes_in_inventories],
+    ['Employee cost',                br.employee_cost],
+    ['Manufacturing expenses',       br.manufacturing_expenses],
+    ['Power & fuel',                 br.power_and_fuel],
+    ['Other expenses',               br.other_expenses],
+  ];
+  (br.additional_line_items || []).forEach(item => {
+    if (item && item.name != null && item.value_cr != null) opExChildren.push([item.name, item.value_cr]);
+  });
+  return [
+    ['Sales (₹ Cr)', e.sales],
+    { label: 'Operating expenses (₹ Cr)', value: opEx, children: opExChildren },
+    ['Operating profit (₹ Cr)', opProfit],
+    ['OPM %',                   opm],
+    { label: 'Other income (₹ Cr)', value: e.other_income, children: [
+      ['Recurring other income',  oi.recurring_other_income],
+      ['Exceptional items',       oi.exceptional_items],
+      ['Exceptional description', oi.exceptional_items_description],
+    ]},
+    ['Interest / finance costs (₹ Cr)', e.interest],
+    ['Depreciation (₹ Cr)',             e.depreciation],
+    ['Total expenses (₹ Cr)',           e.total_expenses],
+    ['PBT (₹ Cr)',                      e.profit_before_tax],
+    ['Tax (₹ Cr)',                      e.tax_amount],
+    ['Tax %',                           taxPct],
+    ['Net profit (₹ Cr)',               e.net_profit],
+    ['EPS basic (₹)',                   e.eps_basic],
+    ['EPS diluted (₹)',                 e.eps_diluted],
+    ['Face value (₹)',                  e.face_value],
+    ['Dividend payout %',               e.dividend_payout_percent],
+  ];
+}
+
+function bankRows(e) {
+  if (!e) return [];
+  return [
+    ['Interest earned (₹ Cr)',     e.interest_earned],
+    ['Interest expended (₹ Cr)',   e.interest_expended],
+    ['Net interest income (₹ Cr)', e.net_interest_income],
+    ['NIM %',                      e.nim_percent],
+    ['Other income (₹ Cr)',        e.other_income],
+    ['Operating profit (₹ Cr)',    e.operating_profit],
+    ['Provisions & contingencies', e.provisions_and_contingencies],
+    ['PBT (₹ Cr)',                 e.profit_before_tax],
+    ['Net profit (₹ Cr)',          e.net_profit],
+    ['Total deposits (₹ Cr)',      e.total_deposits],
+    ['Total advances (₹ Cr)',      e.total_advances],
+    ['CD ratio %',                 e.credit_deposit_ratio_pct],
+    ['CASA deposits (₹ Cr)',       e.casa_deposits],
+    ['CASA %',                     e.casa_percent],
+    ['GNPA (₹ Cr)',                e.gross_npa_amount],
+    ['GNPA %',                     e.gross_npa_percent],
+    ['NNPA (₹ Cr)',                e.net_npa_amount],
+    ['NNPA %',                     e.net_npa_percent],
+    ['PCR %',                      e.provision_coverage_ratio_percent],
+    ['CAR %',                      e.capital_adequacy_ratio_percent],
+    ['Tier-1 %',                   e.tier1_capital_percent],
+    ['CET-1 %',                    e.cet1_percent],
+    ['ROA %',                      e.roa_percent],
+    ['ROE %',                      e.roe_percent],
+    ['Cost-to-income %',           e.cost_to_income_percent],
+  ];
+}
+function nbfcRows(e) {
+  if (!e) return [];
+  return [
+    ['AUM (₹ Cr)',              e.aum],
+    ['AUM growth YoY %',        e.aum_growth_yoy_percent],
+    ['Disbursements (₹ Cr)',    e.disbursements],
+    ['Collection efficiency %', e.collection_efficiency_percent],
+    ['Gross Stage-3 %',         e.gross_stage_3_percent],
+    ['Net Stage-3 %',           e.net_stage_3_percent],
+    ['PCR on Stage-3 %',        e.provision_coverage_on_stage3_percent],
+    ['Cost of funds %',         e.cost_of_funds_percent],
+    ['Yield on advances %',     e.yield_on_advances_percent],
+    ['Spread %',                e.spread_percent],
+    ['NIM %',                   e.nim_percent],
+    ['CAR %',                   e.capital_adequacy_ratio_percent],
+    ['Tier-1 %',                e.tier1_capital_percent],
+  ];
+}
+function lifeInsuranceRows(e) {
+  if (!e) return [];
+  return [
+    { label: 'Total premium income (₹ Cr)', value: e.total_premium_income, children: [
+      ['First-year premium', e.first_year_premium],
+      ['Renewal premium',    e.renewal_premium],
+      ['Single premium',     e.single_premium],
+    ]},
+    ['Reinsurance ceded (₹ Cr)',   e.reinsurance_ceded],
+    ['Net premium (₹ Cr)',         e.net_premium],
+    ['Income from investments',    e.income_from_investments],
+    ['Solvency ratio',             e.solvency_ratio],
+    ['VNB margin %',               e.vnb_margin_percent],
+    ['VNB (₹ Cr)',                 e.value_of_new_business_vnb_cr],
+    ['EV (₹ Cr)',                  e.embedded_value_ev_cr],
+    ['APE (₹ Cr)',                 e.annualized_premium_equivalent_ape_cr],
+    ['NBP (₹ Cr)',                 e.new_business_premium_nbp_cr],
+    ['AUM (₹ Cr)',                 e.assets_under_management_cr],
+    ['PAT — shareholders (₹ Cr)',  e.profit_after_tax_shareholders_account],
+  ];
+}
+function generalInsuranceRows(e) {
+  if (!e) return [];
+  const rows = [
+    ['Gross direct premium (GDPI) ₹ Cr', e.gross_direct_premium_income_gdpi],
+    ['Net written premium (₹ Cr)',       e.net_written_premium],
+    ['Net earned premium (₹ Cr)',        e.net_earned_premium],
+    ['Net incurred claims (₹ Cr)',       e.net_incurred_claims],
+    ['Claims ratio %',                   e.claims_ratio_percent],
+    ['Combined ratio %',                 e.combined_ratio_percent],
+    ['Underwriting P/L',                 e.underwriting_profit_loss],
+    ['Investment income (₹ Cr)',         e.investment_income],
+    ['PBT (₹ Cr)',                       e.profit_before_tax],
+    ['PAT (₹ Cr)',                       e.profit_after_tax],
+    ['Solvency ratio',                   e.solvency_ratio],
+    ['AUM (₹ Cr)',                       e.assets_under_management_cr],
+  ];
+  (e.segment_mix || []).forEach(seg => {
+    rows.push([`${seg.segment_name} — GDPI`, seg.gross_premium_cr]);
+    if (seg.combined_ratio_percent != null) rows.push([`${seg.segment_name} — combined ratio %`, seg.combined_ratio_percent]);
+  });
+  return rows;
+}
+function balanceRows(e) {
+  if (!e) return [];
+  const bb = e.borrowings_breakdown || {};
+  const olb = e.other_liabilities_breakdown || {};
+  const fa = e.fixed_assets_breakdown || {};
+  const oa = e.other_assets_breakdown || {};
+  return [
+    { label: 'Total liabilities (₹ Cr)', value: e.total_liabilities, children: [
+      ['Equity share capital', e.equity_share_capital],
+      ['Reserves & surplus',   e.reserves_and_surplus],
+      { label: 'Total borrowings', value: e.total_borrowings, children: [
+        ['Long-term borrowings',  bb.long_term_borrowings],
+        ['Short-term borrowings', bb.short_term_borrowings],
+        ['Lease liabilities',     bb.lease_liabilities],
+        ['Other borrowings',      bb.other_borrowings],
+      ]},
+      { label: 'Other liabilities', value: e.other_liabilities, children: [
+        ['Trade payables',                olb.trade_payables],
+        ['Provisions',                    olb.provisions],
+        ['Deferred tax liability',        olb.deferred_tax_liability],
+        ['Other current liabilities',     olb.other_current_liabilities],
+        ['Other non-current liabilities', olb.other_non_current_liabilities],
+      ]},
+    ]},
+    { label: 'Total assets (₹ Cr)', value: e.total_assets, children: [
+      { label: 'Fixed assets — net', value: e.fixed_assets_net, children: [
+        ['Land',                 fa.land],
+        ['Buildings',            fa.buildings],
+        ['Plant & machinery',    fa.plant_and_machinery],
+        ['Equipment',            fa.equipment],
+        ['Computers',            fa.computers],
+        ['Furniture & fittings', fa.furniture_and_fittings],
+        ['Vehicles',             fa.vehicles],
+        ['Intangibles',          fa.intangible_assets],
+        ['Other fixed assets',   fa.other_fixed_assets],
+      ]},
+      ['CWIP',        e.capital_work_in_progress],
+      ['Investments', e.investments],
+      { label: 'Other assets', value: e.other_assets, children: [
+        ['Inventories',          oa.inventories],
+        ['Trade receivables',    oa.trade_receivables],
+        ['Cash & equivalents',   oa.cash_and_equivalents],
+        ['Loans & advances',     oa.loans_and_advances],
+        ['Other current assets', oa.other_current_assets],
+        ['Deferred tax asset',   oa.deferred_tax_asset],
+        ['Goodwill',             oa.goodwill],
+      ]},
+    ]},
+    ['Net debt (₹ Cr)',          e.net_debt],
+    ['Debt-to-equity',           e.debt_to_equity],
+    ['Book value per share (₹)', e.book_value_per_share],
+  ];
+}
+function cashFlowRows(e) {
+  if (!e) return [];
+  const op = e.operating_breakdown || {};
+  const inv = e.investing_breakdown || {};
+  const fin = e.financing_breakdown || {};
+  return [
+    { label: 'Cash from operating (₹ Cr)', value: e.cash_from_operating, children: [
+      ['Profit from operations',       op.profit_from_operations],
+      ['Δ Receivables',                op.change_in_receivables],
+      ['Δ Inventory',                  op.change_in_inventory],
+      ['Δ Payables',                   op.change_in_payables],
+      ['Operating deposits change',    op.operating_deposits_change],
+      ['Other WC items',               op.other_working_capital_items],
+      ['Total WC changes',             op.total_working_capital_changes],
+      ['Direct taxes paid',            op.direct_taxes_paid],
+      ['Interest paid (in operating)', op.interest_paid_in_operating],
+    ]},
+    { label: 'Cash from investing (₹ Cr)', value: e.cash_from_investing, children: [
+      ['Fixed assets purchased',         inv.fixed_assets_purchased],
+      ['Fixed assets sold',              inv.fixed_assets_sold],
+      ['CWIP addition',                  inv.capital_work_in_progress_addition],
+      ['Investments purchased',          inv.investments_purchased],
+      ['Investments sold',               inv.investments_sold],
+      ['Interest received',              inv.interest_received],
+      ['Dividend received',              inv.dividend_received],
+      ['Acquisitions',                   inv.acquisitions],
+      ['Redemption/cancellation shares', inv.redemption_or_cancellation_of_shares],
+      ['Other investing',                inv.other_investing_items],
+    ]},
+    { label: 'Cash from financing (₹ Cr)', value: e.cash_from_financing, children: [
+      ['Proceeds from share issue',       fin.proceeds_from_share_issue],
+      ['Proceeds from borrowings',        fin.proceeds_from_borrowings],
+      ['Repayment of borrowings',         fin.repayment_of_borrowings],
+      ['Interest paid',                   fin.interest_paid_in_financing],
+      ['Dividend paid',                   fin.dividend_paid],
+      ['Change in financial liabilities', fin.change_in_financial_liabilities],
+      ['Lease payments',                  fin.lease_payments],
+      ['Other financing',                 fin.other_financing_items],
+    ]},
+    ['Net cash flow (₹ Cr)',  e.net_cash_flow],
+    ['Opening cash (₹ Cr)',   e.opening_cash_balance],
+    ['Closing cash (₹ Cr)',   e.closing_cash_balance],
+    ['Free cash flow (₹ Cr)', e.free_cash_flow],
+  ];
+}
+function ratiosRows(ratiosEntry, annualPnL, balance) {
+  const r2 = n => (n == null || !Number.isFinite(n) ? null : Math.round(n * 100) / 100);
+  const e = ratiosEntry || {};
+  const p = annualPnL || {};
+  const b = balance || {};
+  const oa = b.other_assets_breakdown || {};
+  const olb = b.other_liabilities_breakdown || {};
+  const br = p.expense_breakdown || {};
+  const sales = p.sales;
+  const receivables = oa.trade_receivables;
+  const inventories = oa.inventories;
+  const payables = olb.trade_payables;
+  const materialCost = br.material_cost;
+  const totalAssets = b.total_assets;
+  const totalBorrow = b.total_borrowings;
+  const equity = (b.equity_share_capital != null && b.reserves_and_surplus != null)
+    ? b.equity_share_capital + b.reserves_and_surplus : null;
+  const capitalEmployed = (equity != null && totalBorrow != null) ? equity + totalBorrow : null;
+  const pbt = p.profit_before_tax;
+  const interest = p.interest;
+  const pat = p.net_profit;
+  const ebit = (pbt != null && interest != null) ? pbt + interest : null;
+  const days = (n,d) => (n != null && d != null && d !== 0) ? r2((n / d) * 365) : null;
+  const pct  = (n,d) => (n != null && d != null && d !== 0) ? r2((n / d) * 100) : null;
+  const ratio = (n,d) => (n != null && d != null && d !== 0) ? r2(n / d) : null;
+  const debtor  = days(receivables, sales);
+  const invDays = days(inventories, materialCost);
+  const payDays = days(payables, materialCost);
+  const ccc = (debtor != null && invDays != null && payDays != null) ? r2(debtor + invDays - payDays) : null;
+  const wc = (receivables != null && inventories != null && payables != null && sales)
+    ? r2(((receivables + inventories - payables) / sales) * 365) : null;
+  const roce = pct(ebit, capitalEmployed);
+  const roe  = pct(pat, equity);
+  const roa  = pct(pat, totalAssets);
+  const aTurn = ratio(sales, totalAssets);
+  const iCov = (interest != null && interest > 0.5 && ebit != null) ? r2(ebit / interest) : null;
+  const pick = (a, b) => (a != null ? a : (b != null ? b : null));
+  return [
+    ['Debtor days',           pick(debtor,  e.debtor_days)],
+    ['Inventory days',        pick(invDays, e.inventory_days)],
+    ['Payable days',          pick(payDays, e.payable_days)],
+    ['Cash conversion cycle', pick(ccc,     e.cash_conversion_cycle_days)],
+    ['Working capital days',  pick(wc,      e.working_capital_days)],
+    ['ROCE %',                pick(roce,    e.roce_percent)],
+    ['ROE %',                 pick(roe,     e.roe_percent)],
+    ['ROA %',                 pick(roa,     e.roa_percent)],
+    ['Asset turnover',        pick(aTurn,   e.asset_turnover)],
+    ['Interest coverage',     pick(iCov,    e.interest_coverage_ratio)],
+  ];
+}
+function shareholdingRows(p) {
+  if (!p) return [];
+  return [
+    ['Promoter %',         p.promoter_percent],
+    ['Promoter pledge %',  p.promoter_pledge_percent],
+    ['FII %',              p.fii_percent],
+    ['DII %',              p.dii_percent],
+    ['Public %',           p.public_percent],
+    ['Shareholders count', p.number_of_shareholders],
+  ];
+}
+function revenueMixRows(e) {
+  if (!e) return [];
+  const d = e.domestic_vs_exports || {};
+  const rows = [
+    ['Domestic revenue (₹ Cr)', d.domestic_revenue_cr],
+    ['Domestic %',              d.domestic_revenue_percent],
+    ['Exports revenue (₹ Cr)',  d.exports_revenue_cr],
+    ['Exports %',               d.exports_revenue_percent],
+    ['Imports value (₹ Cr)',    d.imports_value_cr],
+    ['Forex earnings (₹ Cr)',   d.forex_earnings_cr],
+    ['Forex outgo (₹ Cr)',      d.forex_outgo_cr],
+  ];
+  (e.product_wise   || []).forEach(p => rows.push([`Product: ${p.product_name}`, `${p.revenue_cr ?? '—'} Cr · ${p.revenue_percent ?? '—'}%`]));
+  (e.geography_wise || []).forEach(g => rows.push([`Geography: ${g.geography}`, `${g.revenue_cr ?? '—'} Cr · ${g.revenue_percent ?? '—'}%`]));
+  (e.channel_wise   || []).forEach(c => rows.push([`Channel: ${c.channel}`, `${c.revenue_cr ?? '—'} Cr · ${c.revenue_percent ?? '—'}%`]));
+  if (e.customer_concentration) {
+    const cc = e.customer_concentration;
+    if (cc.top_1_customer_percent != null)   rows.push(['Top 1 customer %',   cc.top_1_customer_percent]);
+    if (cc.top_5_customers_percent != null)  rows.push(['Top 5 customers %',  cc.top_5_customers_percent]);
+    if (cc.top_10_customers_percent != null) rows.push(['Top 10 customers %', cc.top_10_customers_percent]);
+  }
+  return rows;
+}
+function renderInsights(cardId, spec) {
+  const wrap = el(`${cardId}-insights`);
+  wrap.innerHTML = '';
+  const items = [];
+
+  if (spec.dividend_embedded && Object.values(spec.dividend_embedded).some(v => v != null)) {
+    const d = spec.dividend_embedded;
+    items.push(['Dividend', [
+      d.dividend_type && `Type: ${d.dividend_type}`,
+      d.dividend_per_share_rs != null && `₹${d.dividend_per_share_rs}/share`,
+      d.dividend_percent_of_face_value != null && `${d.dividend_percent_of_face_value}% of face value`,
+      d.record_date && `Record date: ${d.record_date}`,
+      d.payment_date && `Payment date: ${d.payment_date}`,
+      d.total_payout_cr != null && `Total payout: ₹${d.total_payout_cr} Cr`,
+    ].filter(Boolean).join(' · ')]);
+  }
+  if (spec.auditor && (spec.auditor.auditor_name || spec.auditor.audit_opinion)) {
+    const a = spec.auditor;
+    items.push(['Auditor', [
+      a.auditor_name && `Auditor: ${a.auditor_name}`,
+      a.audit_opinion && `Opinion: ${a.audit_opinion}`,
+      a.going_concern_note?.flag && `⚠ Going concern flag`,
+      a.audit_qualifications?.length && `${a.audit_qualifications.length} qualifications`,
+      a.emphasis_of_matter?.length && `${a.emphasis_of_matter.length} emphasis of matter`,
+    ].filter(Boolean).join(' · ')]);
+  }
+  const oi = spec.other_insights || {};
+  if (oi.order_book_value_cr != null || oi.order_book_description)
+    items.push(['Order book', [oi.order_book_value_cr != null && `₹${oi.order_book_value_cr} Cr`, oi.order_book_description].filter(Boolean).join(' — ')]);
+  if (oi.capacity_utilisation_percent != null) items.push(['Capacity util.', `${oi.capacity_utilisation_percent}%`]);
+  if (oi.capex_plan && (oi.capex_plan.amount_cr != null || oi.capex_plan.description))
+    items.push(['Capex plan', [oi.capex_plan.amount_cr != null && `₹${oi.capex_plan.amount_cr} Cr`, oi.capex_plan.time_horizon, oi.capex_plan.description].filter(Boolean).join(' · ')]);
+  if (oi.contingent_liabilities_cr != null) items.push(['Contingent liab.', `₹${oi.contingent_liabilities_cr} Cr`]);
+  if (Array.isArray(oi.forward_guidance) && oi.forward_guidance.length)
+    items.push(['Guidance', oi.forward_guidance.map(g => `${g.metric}: ${g.value_or_range} (${g.time_horizon})`).join(' · ')]);
+  if (Array.isArray(oi.management_quotes) && oi.management_quotes.length)
+    items.push(['Quotes', oi.management_quotes.slice(0, 3).map(q => `“${q}”`).join('  ')]);
+  if (Array.isArray(oi.risks_flagged) && oi.risks_flagged.length) items.push(['Risks', oi.risks_flagged.join(' · ')]);
+
+  if (items.length) {
+    wrap.innerHTML += `<div class="insights-title">Other insights</div>
+      <div class="insights-grid">${items.map(([k,v]) => `
+        <div class="insight-card"><div class="insight-key">${escapeHtml(k)}</div><div class="insight-val">${escapeHtml(v)}</div></div>
+      `).join('')}</div>`;
+  }
+  const flags = spec.data_integrity_flags || [];
+  if (flags.length) {
+    wrap.innerHTML += `<div class="integrity-flags">
+      <div class="flag-title">⚠ Data integrity flags (${flags.length})</div>
+      ${flags.map(f => `<div class="flag-item">${escapeHtml(f.check)} — ${escapeHtml(f.period || '')} · expected ${formatVal(f.expected)}, got ${formatVal(f.actual)} (Δ ${formatVal(f.delta)})${f.note ? ' · ' + escapeHtml(f.note) : ''}</div>`).join('')}
+    </div>`;
+  }
+}
+</script>
+</body>
+</html>

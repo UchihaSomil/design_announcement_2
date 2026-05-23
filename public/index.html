@@ -427,7 +427,7 @@
 <div class="topbar">
   <div class="topbar-left">
     <div class="topbar-title">BSE Filing Extractor</div>
-    <div class="topbar-sub">— powered by Gemini</div>
+    <div class="topbar-sub" id="topbarSub">— powered by Gemini</div>
     <div class="pipeline-tabs" id="pipelineTabs">
       <button class="pipeline-tab active" data-pipeline="single" onclick="selectPipeline('single')">Single</button>
       <button class="pipeline-tab" data-pipeline="double" onclick="selectPipeline('double')">Double</button>
@@ -448,6 +448,7 @@
         <div class="config-label">Provider</div>
         <select id="cfgProvider" onchange="onProviderChange()">
           <option value="gemini">Gemini</option>
+          <option value="openai">OpenAI</option>
           <option value="groq">Groq (text-only)</option>
         </select>
       </div>
@@ -462,6 +463,18 @@
       <div class="config-row" id="groqKeyRow" style="display:none">
         <div class="config-label">Groq API Key</div>
         <input type="password" id="cfgGroqApiKey" placeholder="gsk_…" />
+      </div>
+      <div class="config-row" id="openaiKeyRow" style="display:none">
+        <div class="config-label">OpenAI API Key</div>
+        <input type="password" id="cfgOpenaiApiKey" placeholder="sk-…" />
+      </div>
+      <div class="config-row" id="openaiOrgRow" style="display:none">
+        <div class="config-label">Organization ID <span class="hint">(optional)</span></div>
+        <input type="text" id="cfgOpenaiOrg" placeholder="org-…" />
+      </div>
+      <div class="config-row" id="openaiProjectRow" style="display:none">
+        <div class="config-label">Project ID <span class="hint">(optional)</span></div>
+        <input type="text" id="cfgOpenaiProject" placeholder="proj_…" />
       </div>
     </div>
 
@@ -521,6 +534,34 @@
         </select>
       </div>
       <div class="hint" style="margin-top:6px; line-height:1.5">Groq is text-only — the PDF's text layer is sent. Use on text-based filings (scanned PDFs won't work).</div>
+    </div>
+
+    <div class="config-section" id="openaiModelSection" style="display:none">
+      <div class="config-section-title">Model</div>
+      <div class="config-row">
+        <div class="config-label">OpenAI Model</div>
+        <select id="cfgOpenaiModel">
+          <optgroup label="GPT-4o (recommended)">
+            <option value="gpt-4o-mini" selected>gpt-4o-mini</option>
+            <option value="gpt-4o">gpt-4o</option>
+          </optgroup>
+          <optgroup label="GPT-4.1">
+            <option value="gpt-4.1">gpt-4.1</option>
+            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+            <option value="gpt-4.1-nano">gpt-4.1-nano</option>
+          </optgroup>
+          <optgroup label="Reasoning (o-series)">
+            <option value="o4-mini">o4-mini</option>
+            <option value="o3-mini">o3-mini</option>
+            <option value="o1-mini">o1-mini</option>
+          </optgroup>
+          <optgroup label="GPT-5 (preview)">
+            <option value="gpt-5">gpt-5</option>
+            <option value="gpt-5-mini">gpt-5-mini</option>
+          </optgroup>
+        </select>
+      </div>
+      <div class="hint" style="margin-top:6px; line-height:1.5">Text mode + Base64 PDF supported on gpt-4o / gpt-4.1 family. Files API mode falls back to Base64. Reasoning models (o-series, gpt-5) ignore temperature.</div>
     </div>
 
     <div class="config-section" id="thinkingSection">
@@ -624,7 +665,7 @@
             <div class="mc-name">Base64 Inline</div>
             <span class="mc-tag tag-rec">Recommended</span>
           </div>
-          <div class="mc-desc">Sends PDF as base64 inline. Gemini sees the real layout including tables — best for financial results.</div>
+          <div class="mc-desc">Sends PDF as base64 inline. The model sees the real layout including tables — best for financial results.</div>
           <div class="mc-input">
             <div class="mc-drop" id="drop-base64">
               <input type="file" id="file-base64" accept=".pdf" multiple onchange="handleFileSelect('base64',this)" onclick="event.stopPropagation()" />
@@ -769,6 +810,7 @@ const DEFAULTS = {
   provider: 'gemini',
   apiKey: '', model: 'gemini-3.1-flash-lite-preview',
   groqApiKey: '', groqModel: 'llama-3.3-70b-versatile',
+  openaiApiKey: '', openaiModel: 'gpt-4o-mini', openaiOrg: '', openaiProject: '',
   thinkingEnabled: true, thinkingLevel: 'MINIMAL',
   mime: 'application/json', temperature: 0, maxTokens: 32768,
   concurrency: 3, systemPromptOverride: '', mode: 'text',
@@ -779,6 +821,11 @@ const DEFAULTS = {
 };
 let config = { ...DEFAULTS };
 
+function providerLabel() {
+  const p = (config && config.provider) || 'gemini';
+  return p === 'openai' ? 'OpenAI' : p === 'groq' ? 'Groq' : 'Gemini';
+}
+
 function loadConfig() {
   try { config = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') }; }
   catch { config = { ...DEFAULTS }; }
@@ -787,6 +834,10 @@ function loadConfig() {
   document.getElementById('cfgApiKey').value             = config.apiKey;
   document.getElementById('cfgGroqApiKey').value         = config.groqApiKey || '';
   document.getElementById('cfgGroqModel').value          = config.groqModel || 'llama-3.3-70b-versatile';
+  document.getElementById('cfgOpenaiApiKey').value       = config.openaiApiKey || '';
+  document.getElementById('cfgOpenaiModel').value        = config.openaiModel || 'gpt-4o-mini';
+  document.getElementById('cfgOpenaiOrg').value          = config.openaiOrg || '';
+  document.getElementById('cfgOpenaiProject').value      = config.openaiProject || '';
   document.getElementById('cfgModel').value              = config.model;
   document.getElementById('cfgThinkingEnabled').checked  = config.thinkingEnabled;
   document.getElementById('cfgThinkingLevel').value      = config.thinkingLevel;
@@ -808,6 +859,10 @@ function saveConfig() {
     apiKey: document.getElementById('cfgApiKey').value.trim(),
     groqApiKey: document.getElementById('cfgGroqApiKey').value.trim(),
     groqModel: document.getElementById('cfgGroqModel').value,
+    openaiApiKey: document.getElementById('cfgOpenaiApiKey').value.trim(),
+    openaiModel: document.getElementById('cfgOpenaiModel').value,
+    openaiOrg: document.getElementById('cfgOpenaiOrg').value.trim(),
+    openaiProject: document.getElementById('cfgOpenaiProject').value.trim(),
     model: document.getElementById('cfgModel').value,
     thinkingEnabled: document.getElementById('cfgThinkingEnabled').checked,
     thinkingLevel: document.getElementById('cfgThinkingLevel').value,
@@ -837,28 +892,54 @@ function syncThinkingRow() {
 
 function onProviderChange() {
   const p = document.getElementById('cfgProvider').value;
-  const isGroq = p === 'groq';
-  document.getElementById('geminiKeyRow').style.display      = isGroq ? 'none' : '';
-  document.getElementById('groqKeyRow').style.display        = isGroq ? '' : 'none';
-  document.getElementById('geminiModelSection').style.display = isGroq ? 'none' : '';
-  document.getElementById('groqModelSection').style.display   = isGroq ? '' : 'none';
-  document.getElementById('thinkingSection').style.display   = isGroq ? 'none' : '';
+  const isGroq   = p === 'groq';
+  const isOpenAI = p === 'openai';
+  const isGemini = p === 'gemini';
 
-  // Groq is text-only — disable Base64 and Files API cards.
-  ['base64', 'filesapi'].forEach(m => {
-    const card = document.getElementById(`card-${m}`);
+  // Keep config in sync immediately so providerLabel() picks up the new value
+  // even before saveConfig() runs.
+  config.provider = p;
+  const sub = document.getElementById('topbarSub');
+  if (sub) sub.textContent = `— powered by ${providerLabel()}`;
+
+  document.getElementById('geminiKeyRow').style.display      = isGemini ? '' : 'none';
+  document.getElementById('groqKeyRow').style.display        = isGroq   ? '' : 'none';
+  document.getElementById('openaiKeyRow').style.display      = isOpenAI ? '' : 'none';
+  document.getElementById('openaiOrgRow').style.display      = isOpenAI ? '' : 'none';
+  document.getElementById('openaiProjectRow').style.display  = isOpenAI ? '' : 'none';
+
+  document.getElementById('geminiModelSection').style.display = isGemini ? '' : 'none';
+  document.getElementById('groqModelSection').style.display   = isGroq   ? '' : 'none';
+  document.getElementById('openaiModelSection').style.display = isOpenAI ? '' : 'none';
+
+  // Thinking is Gemini-only.
+  document.getElementById('thinkingSection').style.display    = isGemini ? '' : 'none';
+
+  // Mode-card availability per provider:
+  //   gemini → text + base64 + filesapi
+  //   openai → text + base64 (filesapi falls back to base64 server-side)
+  //   groq   → text only
+  const cardBase64  = document.getElementById('card-base64');
+  const cardFilesApi = document.getElementById('card-filesapi');
+
+  const setCard = (card, enabled, tip) => {
     if (!card) return;
-    if (isGroq) {
-      card.style.opacity = '0.35';
-      card.style.pointerEvents = 'none';
-      card.title = 'Groq is text-only — use Text Extraction mode.';
-    } else {
-      card.style.opacity = '';
-      card.style.pointerEvents = '';
-      card.title = '';
-    }
-  });
-  if (isGroq && selectedMode !== 'text') selectMode('text');
+    if (enabled) { card.style.opacity = ''; card.style.pointerEvents = ''; card.title = ''; }
+    else         { card.style.opacity = '0.35'; card.style.pointerEvents = 'none'; card.title = tip || ''; }
+  };
+
+  if (isGroq) {
+    setCard(cardBase64, false, 'Groq is text-only — use Text Extraction mode.');
+    setCard(cardFilesApi, false, 'Groq is text-only — use Text Extraction mode.');
+    if (selectedMode !== 'text') selectMode('text');
+  } else if (isOpenAI) {
+    setCard(cardBase64, true);
+    setCard(cardFilesApi, false, 'Files API is Gemini-only. OpenAI will use Base64 instead.');
+    if (selectedMode === 'filesapi') selectMode('base64');
+  } else { // gemini
+    setCard(cardBase64, true);
+    setCard(cardFilesApi, true);
+  }
 }
 
 const MODEL_CAPS = {
@@ -1081,6 +1162,8 @@ async function submitJobs() {
   saveConfig();
   if (config.provider === 'groq') {
     if (!config.groqApiKey) { alert('Enter your Groq API key in the config panel and click Save.'); return; }
+  } else if (config.provider === 'openai') {
+    if (!config.openaiApiKey) { alert('Enter your OpenAI API key in the config panel and click Save.'); return; }
   } else {
     if (!config.apiKey) { alert('Enter your Gemini API key in the config panel and click Save.'); return; }
   }
@@ -1111,7 +1194,7 @@ const stageLabels = {
   downloading: 'Downloading from URL',
   extracting:  'Preparing PDF',
   extracted:   'PDF ready',
-  calling_api: 'Calling Gemini API',
+  calling_api: 'Calling LLM API',
   parsing:     'Parsing JSON response',
 };
 
@@ -1281,7 +1364,7 @@ async function processItem({ file, url, cardId }) {
     es.addEventListener('attempt', e => {
       const { attempt, total, step } = JSON.parse(e.data);
       const prefix = step ? `[${step}] ` : '';
-      setStage(cardId, 'calling_api', 'active', `${prefix}Calling Gemini — attempt ${attempt}/${total}`);
+      setStage(cardId, 'calling_api', 'active', `${prefix}Calling ${providerLabel()} — attempt ${attempt}/${total}`);
     });
 
     es.addEventListener('attempt_done', e => {

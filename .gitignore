@@ -4,3 +4,7 @@ data/
 .DS_Store
 *.pdf
 .claude/
+_classify_test/
+.env
+.env.local
+.env.*.local

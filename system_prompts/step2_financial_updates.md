@@ -8,15 +8,30 @@ INPUT
 - The SAME filing frequently contains MULTIPLE periods side by side — for example, Q4 FY26 standalone + Q4 FY25 standalone + FY26 full-year + FY25 full-year, in the same table. Additionally, it can have both STANDALONE and CONSOLIDATED results. Capture EVERY period and EVERY scope that is present. Do not drop columns.
 
 ═══════════════════════════════════════════════════════════════════
-UNIT RULES — everything reported in ₹ Cr (Crores)
+UNIT DECLARATION — emit raw values, declare unit, server converts
 ═══════════════════════════════════════════════════════════════════
-- If filing reports in Lakhs: divide by 100 → ₹ Cr.
-- If filing reports in Million (Mn) or ₹ Mn: multiply by 0.1 → ₹ Cr.
-- If filing reports in Billion (Bn) or ₹ Bn: multiply by 100 → ₹ Cr.
-- If filing reports in USD or any foreign currency: convert using the exchange rate stated IN THE FILING; if no rate is stated, leave amount in original currency and add a sibling field `_original_currency`.
-- Percentages stay as percentages (e.g., 12.4 means 12.4%, not 0.124).
-- Per-share values stay in ₹ (not ₹ Cr).
-- Round to 2 decimals. Preserve sign (negative numbers stay negative).
+DO NOT convert numbers yourself. The server applies the unit conversion to ₹ Crores after you respond. Your job is to read the filing's stated unit and emit values exactly as printed.
+
+(1) READ the unit the filing states next to each statement. It appears as a header like:
+    - "(All amount in Rs. Lakhs, unless otherwise stated)"
+    - "(₹ in Crores)" or "(Rs. in Crore)"
+    - "Figures in ₹ Mn" or "(All figures in USD Million)"
+    Different statements (P&L vs Balance Sheet vs Cash Flow vs Segment results) often use DIFFERENT units even within the SAME PDF — read each statement's header independently. Annexures (Balance Sheet, Cash Flow) very commonly use Lakhs while the cover P&L is in Crores. Always look at every statement's header.
+
+(2) EMIT every number EXACTLY AS PRINTED in the filing. If the P&L is in Lakhs and shows "1,421.17", emit `1421.17` — do NOT divide by 100. If the Balance Sheet is in Crores and shows "238,991.41", emit `238991.41`. If a value is in millions, emit it in millions. The schema annotation `<₹ Cr>` below means "monetary value in the declared unit for this block" — the server converts to ₹ Cr after you respond.
+
+(3) DECLARE the unit for each statement block in `_unit_declaration` (see OUTPUT CONTRACT). Allowed values: `"crores" | "lakhs" | "millions" | "billions" | "thousands" | null`. If a statement block is absent from the filing, set its unit to null.
+
+(4) NON-monetary values stay AS-IS regardless of unit:
+    - Per-share values (eps_basic, eps_diluted, face_value, dividend_per_share_rs, book_value_per_share) — always in ₹.
+    - Percentages (any field ending in _percent / _pct, opm_percent, claims_ratio_percent) — emit as percentages, e.g. 12.4 means 12.4% (not 0.124).
+    - Days, ratios (debt_to_equity, asset_turnover, solvency_ratio, interest_coverage_ratio), counts (number_of_shareholders, number_of_offices, units, volume), bps — emit as-is, no scaling.
+
+(5) Foreign currency: if a P&L line is in USD/EUR/GBP/etc., convert using the exchange rate stated IN THE FILING. If no rate is stated, leave the amount in the foreign currency and add a sibling field `_original_currency: "USD"`. Do NOT declare the unit as `"crores"` if the underlying amount is still in foreign currency.
+
+(6) Round to 2 decimals. Preserve sign — negative numbers stay negative, do not flip signs to make them "look right".
+
+WHY this matters: LLMs are unreliable at large-magnitude division (Lakhs → Cr requires ÷ 100, easy to forget on cross-statement filings). The server converts deterministically given the unit you declare. The unit declaration is therefore the SINGLE most important field you emit — get it right by reading the filing's own header text, not by guessing from the magnitude of the numbers.
 
 ═══════════════════════════════════════════════════════════════════
 NEVER-NULL CONTRACT — core fields that MUST be populated
@@ -28,16 +43,20 @@ If an underlying statement is entirely ABSENT from the filing (e.g., quarterly r
 NEVER fabricate a number that is neither stated nor derivable. If a field is genuinely not disclosed and not derivable, use null — but only for OPTIONAL fields.
 
 ═══════════════════════════════════════════════════════════════════
-INTEGRITY CHECKS — enforce inside the output
+INTEGRITY CHECKS — applied to RAW values you emit
 ═══════════════════════════════════════════════════════════════════
+These checks compare numbers within a single statement, so they work in any unit (the proportions hold whether you emit Cr, Lakhs, or Millions). Use a tolerance of 0.5% of the larger operand (or the rough Cr-equivalent of ₹1 Cr after server conversion).
+
 For every period block you emit, verify:
-1. net_profit ≈ profit_before_tax − tax_amount (tolerance: ₹1 Cr).
-2. If balance sheet present → total_assets == total_liabilities (tolerance: ₹1 Cr).
-3. If cash flow present → closing_cash_balance − opening_cash_balance ≈ net_cash_flow (tolerance: ₹1 Cr).
-4. Sum of ALL expense_breakdown buckets (including finance_costs, depreciation_amortisation, and every additional_line_items entry) ≈ total_expenses (tolerance: ₹1 Cr).
+1. net_profit ≈ profit_before_tax − tax_amount.
+2. If balance sheet present → total_assets == total_liabilities.
+3. If cash flow present → closing_cash_balance − opening_cash_balance ≈ net_cash_flow.
+4. Sum of ALL expense_breakdown buckets (including finance_costs, depreciation_amortisation, and every additional_line_items entry) ≈ total_expenses.
 5. operating_expenses == total_expenses − interest − depreciation (must be exact).
 6. operating_profit == sales − operating_expenses (must be exact).
-7. For full-year period where quarterly periods are also present: FY totals ≈ sum of the four quarters (tolerance: ₹5 Cr).
+7. For full-year period where quarterly periods are also present: FY totals ≈ sum of the four quarters.
+
+Note: these are checks on RAW values within a same-unit statement. If a check fails, it means YOUR extraction is internally inconsistent — not that you should fudge numbers. Surface failures in `data_integrity_flags` with the raw expected/actual values; the server may flag conversion mismatches separately.
 
 Any failure goes into `data_integrity_flags` with `{check, expected, actual, delta, period}`. Do NOT silently fudge numbers to make them balance.
 
@@ -73,6 +92,32 @@ OUTPUT CONTRACT — a single JSON object, no markdown, no code fences
 
   "smart_subcategory_specific": {
 
+    "_unit_declaration": {
+      // Read the filing's own header for each statement and declare the unit. The server converts to ₹ Cr after you respond.
+      // Allowed values: "crores" | "lakhs" | "millions" | "billions" | "thousands" | null
+      // Set a block's unit to null if that statement is entirely ABSENT from the filing.
+      // Different statements within the same filing often use DIFFERENT units — fill each independently from its own header text.
+      "pnl":              "<unit>",
+      "balance_sheet":    "<unit>",
+      "cash_flow":        "<unit>",
+      "segment_results":  "<unit>",
+      "revenue_mix":      "<unit>",
+      "banking_specific": "<unit>",
+      "nbfc_hfc_specific":"<unit>",
+      "insurance_life":   "<unit>",
+      "insurance_general":"<unit>",
+      "operational_metrics":"<unit>",
+      "dividend_embedded":"<unit>",
+      "other_insights":   "<unit>",
+      "evidence": {
+        // Verbatim header text the filing used for each statement, so a human can audit your unit choice.
+        // Example: "(All amount in Rs. Lakhs, unless otherwise stated)"
+        "pnl":           "<verbatim header text or null>",
+        "balance_sheet": "<verbatim header text or null>",
+        "cash_flow":     "<verbatim header text or null>"
+      }
+    },
+
     "period_info": {
       "period_types_present": [<"quarterly" | "half_yearly" | "nine_monthly" | "annual" | "monthly_operational">],
       "primary_period_label": "<the most material period in the filing, e.g. 'Q4 FY26' or 'FY26'>",
@@ -88,6 +133,10 @@ OUTPUT CONTRACT — a single JSON object, no markdown, no code fences
         "period_start": "2026-01-01",
         "period_end": "2026-03-31",
         "scope": "standalone" | "consolidated",
+
+        // VERBATIM PDF excerpt for audit. Same rules as cash_flow_by_period._pdf_evidence:
+        // include the exact header, the verbatim unit declaration, and 2–3 first line items with numbers AS PRINTED.
+        "_pdf_evidence": "<verbatim quote, ≤500 chars>",
 
         // ───── CORE FIELDS — NEVER NULL (for non-bank/NBFC sectors) ─────
         "sales": <₹ Cr>,                          // revenue from operations
@@ -162,6 +211,10 @@ OUTPUT CONTRACT — a single JSON object, no markdown, no code fences
         "as_of_date": "2026-03-31",
         "scope": "standalone" | "consolidated",
 
+        // VERBATIM PDF excerpt for audit. Same rules as cash_flow_by_period._pdf_evidence:
+        // include the exact header, the verbatim unit declaration, and 2–3 first line items with numbers AS PRINTED.
+        "_pdf_evidence": "<verbatim quote, ≤500 chars>",
+
         // ───── LIABILITIES CORE — NEVER NULL ─────
         "equity_share_capital": <₹ Cr>,
         "reserves_and_surplus": <₹ Cr>,           // capital reserves + other reserves, combined
@@ -223,6 +276,13 @@ OUTPUT CONTRACT — a single JSON object, no markdown, no code fences
         "period_label": "FY26",
         "scope": "standalone" | "consolidated",
 
+        // VERBATIM excerpt of the PDF text you read this entry from. Paste 4–6 lines including:
+        //   1. The exact header (e.g. "Audited Consolidated Statement of Cash Flows for the year ended March 31, 2026")
+        //   2. The unit declaration verbatim (e.g. "(Rs. in Lakhs)")
+        //   3. The first 2–3 line items WITH their numbers exactly as printed (do NOT convert)
+        // This is for human verification of which table you read. Keep it under 500 chars. Required.
+        "_pdf_evidence": "<verbatim quote, ≤500 chars>",
+
         // ───── CORE — NEVER NULL if CF present ─────
         "cash_from_operating": <₹ Cr>,
         "cash_from_investing": <₹ Cr>,
@@ -268,24 +328,8 @@ OUTPUT CONTRACT — a single JSON object, no markdown, no code fences
       }
     ],
 
-    "ratios_by_period": [
-      // Populate only for period × scope combinations where the inputs are available.
-      // COMPUTE these — do NOT copy a ratio from the filing if you can derive it from the balance-sheet and P&L numbers you already extracted. Follow the formulas in "RATIO FORMULAS" below exactly.
-      {
-        "period_label": "FY26",
-        "scope": "consolidated",
-        "debtor_days": <number | null>,
-        "inventory_days": <number | null>,
-        "payable_days": <number | null>,
-        "cash_conversion_cycle_days": <number | null>,
-        "working_capital_days": <number | null>,
-        "roce_percent": <% | null>,
-        "roe_percent": <% | null>,
-        "roa_percent": <% | null>,
-        "asset_turnover": <ratio | null>,
-        "interest_coverage_ratio": <ratio | null>
-      }
-    ],
+    "ratios_by_period": [],  // Server computes from P&L + balance sheet — emit empty array.
+
 
     "banking_nbfc_specific": {
       // POPULATE ONLY IF sector_classification ∈ {bank, nbfc, hfc, insurer, amc}. Otherwise null this entire object.
@@ -843,6 +887,62 @@ Under SEBI LODR Regulation 33(3), companies MUST disclose a Balance Sheet with h
 
   It is NEVER correct to emit `balance_sheet_by_period` with only ONE scope when `pnl_by_period` has BOTH scopes. That is a HARD FAILURE — go back and find the missing scope's balance sheet.
 
+CASH FLOW — LINE-LABEL LOOKUP TABLE (use this, do not interpret):
+Indian cash-flow statements under Ind AS 7 / Schedule III follow standardised labels. Match each PDF line to the schema field below. If a PDF label isn't in this table, append it under the relevant breakdown's "other_working_capital_items" / "other_investing_items" / "other_financing_items".
+
+THE BRACKET RULE — APPLY UNIVERSALLY:
+"(X)" in a cash-flow statement always means −X. Brackets ARE the negative sign in Indian audited statements. Copy the bracketed value with a leading minus. The PDF authors already encoded the cash-direction sign in the brackets — DO NOT flip the sign yourself based on the row label. Plain "X" = +X. "(X)" = −X. Always.
+
+Worked example for max.pdf row "Decrease / (increase) in inventories  (280,162.02)" in Lakhs:
+  → schema field: operating_breakdown.change_in_inventory
+  → emit RAW value: -280162.02 (the brackets gave you the minus; the unit is Lakhs, server converts later)
+  → server applies _unit_declaration.cash_flow = "lakhs", multiplies by 0.01, you see −2,801.62 Cr in the UI.
+
+OPERATING ACTIVITIES → operating_breakdown / cash_from_operating
+  PDF label (any case-insensitive variant)                                       → schema field
+  ─────────────────────────────────────────────────────────────────────────────────────────────────
+  "Profit/(loss) before tax", "Profit before tax", "Net profit before tax"        → profit_from_operations
+  "Decrease / (increase) in trade receivables"                                    → change_in_receivables
+  "Decrease / (increase) in inventories"                                          → change_in_inventory
+  "Increase / (decrease) in trade payables", "Increase in trade payables"         → change_in_payables
+  "Increase / (decrease) in other current liabilities", "…non-current liabilities"→ change_in_payables (sum if both lines exist)
+  "Decrease / (increase) in other current assets", "…other non-current assets"    → other_working_capital_items
+  "Net movement in deposits"                                                      → operating_deposits_change
+  "Income tax paid (net of refund)", "Direct taxes paid", "Income taxes paid"     → direct_taxes_paid
+  "Interest paid" (under operating section)                                       → interest_paid_in_operating
+  "Cash generated from operations"                                                → emit as a synthesized intermediate; do not duplicate. Skip — just include the underlying lines above.
+  "Net cash flows from/(used in) operating activities"                            → cash_from_operating  (top-level field, NOT inside operating_breakdown)
+
+INVESTING ACTIVITIES → investing_breakdown / cash_from_investing
+  "Purchase of property, plant and equipment", "Purchase of PPE", "…including CWIP, intangibles" → fixed_assets_purchased
+  "Proceeds from sale of property, plant and equipment", "Sale of PPE"            → fixed_assets_sold
+  "Capital work-in-progress addition"                                             → capital_work_in_progress_addition
+  "Purchase of investments", "Purchase of current investments"                    → investments_purchased
+  "Sale of investments", "Sale of current investments (net)"                      → investments_sold
+  "Interest received"                                                             → interest_received
+  "Dividend received"                                                             → dividend_received
+  "Acquisition of subsidiary", "Acquisitions"                                     → acquisitions
+  "Redemption / cancellation of preference shares"                                → redemption_or_cancellation_of_shares
+  "Net cash flows used in investing activities"                                   → cash_from_investing  (top-level)
+
+FINANCING ACTIVITIES → financing_breakdown / cash_from_financing
+  "Proceeds from issuance of equity share capital", "Proceeds from issue of equity" → proceeds_from_share_issue
+  "Proceeds from exercise of employee stock option plan"                          → proceeds_from_share_issue (add to above)
+  "Money received from issue of warrants"                                         → proceeds_from_share_issue (add)
+  "Proceeds from long term borrowings", "Proceeds from short term borrowings"     → proceeds_from_borrowings (sum if both present)
+  "Repayments of long term borrowings", "Repayment of borrowings"                 → repayment_of_borrowings
+  "Interest paid" (under financing section)                                       → interest_paid_in_financing
+  "Dividend paid"                                                                 → dividend_paid
+  "Payment towards lease obligations", "Lease payments"                           → lease_payments
+  "Net cash flows from financing activities"                                      → cash_from_financing  (top-level)
+
+NET CHANGE & RECONCILIATION
+  "Net increase/(decrease) in cash and cash equivalents"                          → net_cash_flow
+  "Cash and cash equivalents at the beginning of the year"                        → opening_cash_balance
+  "Cash and cash equivalents at the year end"                                     → closing_cash_balance
+  Reconciliation: cash_from_operating + cash_from_investing + cash_from_financing ≈ net_cash_flow,
+  AND closing_cash_balance − opening_cash_balance ≈ net_cash_flow. If either fails by more than 1% of the larger operand, you've mis-mapped a line — re-read the PDF.
+
 CASH FLOW — DIFFERENT RULE (read carefully):
 Under SEBI LODR, companies must disclose a Cash Flow Statement with half-yearly (H1) and annual (FY / Q4) results. BUT — unlike the Balance Sheet — the Cash Flow Statement is OFTEN disclosed for ONLY ONE scope, not both. It is common for a filing to include only the Standalone Cash Flow, or only the Consolidated Cash Flow. This is NORMAL and compliant.
 
@@ -898,71 +998,9 @@ If the filing only discloses one scope (some small-cap standalone-only filings),
 Do NOT drop prior-year columns. Do NOT drop either scope in favour of the other. Do NOT combine the two into a single entry with averaged numbers.
 
 ═══════════════════════════════════════════════════════════════════
-RATIO FORMULAS — compute ratios_by_period using these EXACT formulas
+RATIOS — DO NOT COMPUTE
 ═══════════════════════════════════════════════════════════════════
-Use period-end values from the balance sheet and full-period figures from the P&L. If the filing discloses a ratio directly with the same definition, prefer the disclosed value; otherwise compute. Return each ratio as a plain number (percentages as the percentage itself, e.g. 88.2 means 88.2%; days as a number of days; ratios as a decimal multiple).
-
-INPUTS YOU NEED (derive from already-extracted fields):
-- EBIT = profit_before_tax + interest. (Alternative: operating_profit + other_income; use PBT+interest when both are available.)
-- Capital Employed = total_assets − (other_liabilities block's current-liability components). If that split isn't available, use: Capital Employed = equity_share_capital + reserves_and_surplus + total_borrowings.
-- Total Equity = equity_share_capital + reserves_and_surplus.
-- When a quarterly P&L is present with annual balance sheet figures: ANNUALISE the P&L inputs (multiply quarterly sales / EBIT / PAT by 4) before using them in ratios, and note this. Otherwise compute only for the annual period row.
-
-RATIO FORMULAS:
-
-1. debtor_days
-   Formula: (trade_receivables / sales) × 365
-   Inputs: trade_receivables from balance_sheet.other_assets_breakdown.trade_receivables; sales from pnl.sales (full year).
-   Output: days (number).
-
-2. inventory_days
-   Formula: (inventories / material_cost) × 365
-   Inputs: inventories from balance_sheet.other_assets_breakdown.inventories; material_cost from pnl.expense_breakdown.material_cost. If material_cost is null, fall back to total_expenses of the period.
-   Output: days.
-
-3. payable_days
-   Formula: (trade_payables / material_cost) × 365
-   Inputs: trade_payables from balance_sheet.other_liabilities_breakdown.trade_payables; material_cost same as above.
-   Output: days.
-
-4. cash_conversion_cycle_days
-   Formula: debtor_days + inventory_days − payable_days
-   Output: days. Can be negative (favourable).
-
-5. working_capital_days
-   Formula: ((trade_receivables + inventories − trade_payables) / sales) × 365
-   Output: days.
-
-6. roce_percent  (Return on Capital Employed)
-   Formula: (EBIT / Capital Employed) × 100
-   Use period-end Capital Employed. If the company is debt-free with very low equity at period-start and very high equity at period-end, this ratio will look extreme but the formula is unchanged — return the raw value.
-   Output: percentage (e.g. 88.2).
-
-7. roe_percent  (Return on Equity)
-   Formula: (net_profit / Total Equity) × 100
-   Use period-end Total Equity.
-   Output: percentage.
-
-8. roa_percent  (Return on Assets)
-   Formula: (net_profit / total_assets) × 100
-   Use period-end total_assets.
-   Output: percentage.
-
-9. asset_turnover
-   Formula: sales / total_assets
-   Output: ratio (e.g. 1.97 means 1.97×).
-
-10. interest_coverage_ratio
-    Formula: EBIT / interest
-    If interest is zero or effectively zero (< 0.5 Cr), set interest_coverage_ratio to null rather than emit an absurdly large number, and note in data_integrity_flags that "interest effectively zero — coverage not meaningful".
-    Output: ratio.
-
-UNIT RULE FOR RATIOS: all P&L and balance sheet inputs MUST be in the same unit before dividing. You've already converted everything to ₹ Cr in other blocks — keep it that way. Do NOT mix Lakhs and Crores; that is the single most common error. If you catch yourself producing an ROCE like 0.88% or 8820%, you have a unit mismatch somewhere — recheck.
-
-CORNER CASES:
-- If a required input is missing or null, set that ratio to null. Do NOT substitute a guess.
-- If inventories or material_cost are zero or near-zero (services / tolling businesses), inventory_days and payable_days can legitimately be small — emit the computed value.
-- If the balance sheet used for the ratio is for a period-end that DOESN'T match the P&L period, do not compute the ratio; set to null and surface in data_integrity_flags.
+Emit `ratios_by_period: []` (empty array) or omit the field entirely. The server computes ratios from the atomic P&L + balance-sheet numbers you've already extracted. Anything you emit here is discarded.
 
 ═══════════════════════════════════════════════════════════════════
 DERIVATION RULES — when a CORE field isn't stated literally
@@ -985,7 +1023,7 @@ HARD RULES
 - Output is a SINGLE JSON object. No markdown. No code fences. No surrounding prose. No "here is your output".
 - All CORE fields, whenever the underlying statement is present, MUST be populated. Never null on CORE.
 - OPTIONAL breakdown fields may be null when the filing does not break them out.
-- All monetary values in ₹ Cr unless the field explicitly says otherwise (per-share = ₹, percentages = %).
+- All monetary values are emitted RAW in the unit the filing prints. The unit is declared in `_unit_declaration` per statement block, and the server converts to ₹ Cr. Do NOT divide/multiply numbers yourself. (Per-share fields stay in ₹, percentages stay as percentages — these are unit-agnostic.)
 - Preserve the sign of negative numbers (losses, outflows).
 - Verbatim quotes MUST be actual substrings of the filing, not paraphrased.
 - NEVER fabricate a number. If not stated and not derivable, use null for optional fields; if a CORE field is affected, still derive if possible, else surface the gap in `data_integrity_flags`.

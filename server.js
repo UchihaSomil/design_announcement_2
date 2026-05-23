@@ -19,6 +19,9 @@ const upload = multer({ dest: path.join(__dirname, 'uploads/') });
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// /new — simplified pipeline page (text-mode classify on first 5 pages → base64 extract).
+app.get('/new', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'new.html')));
+
 // ── SSE ──────────────────────────────────────────────────────────
 const clients = new Map();
 
@@ -72,6 +75,24 @@ function extractTextFromPDF(pdfPath) {
   });
 }
 
+// Extract only the first N pages of a PDF as text.
+// Used by the /new pipeline to keep Step-1 classifier input small (~80–90% token saving).
+function extractFirstNPagesOfPDF(pdfPath, n = 5) {
+  return new Promise((resolve, reject) => {
+    const parser = new PDFParser();
+    parser.on('pdfParser_dataReady', data => {
+      const safe = s => { try { return decodeURIComponent(s); } catch { return s; } };
+      const total = data.Pages.length;
+      const text = data.Pages.slice(0, n)
+        .map(pg => pg.Texts.map(t => safe(t.R.map(r => r.T).join(''))).join(' '))
+        .join('\n');
+      resolve({ text, totalPages: total, pagesUsed: Math.min(n, total) });
+    });
+    parser.on('pdfParser_dataError', err => reject(new Error(err.parserError || String(err))));
+    parser.loadPDF(pdfPath);
+  });
+}
+
 async function downloadFile(url, dest) {
   const resp = await fetch(url, {
     headers: {
@@ -101,6 +122,126 @@ app.get('/prompts/:name', (req, res) => {
   if (txt == null) return res.status(404).send('');
   res.type('text/plain').send(txt);
 });
+
+// ── Unit conversion (Step 2 Financial Updates) ────────────────────
+// LLM emits raw values + a per-block unit declaration; server converts to ₹ Cr deterministically.
+// Per-block declarations live at: smart_subcategory_specific._unit_declaration[blockKey] = "lakhs"|"crores"|"millions"|"billions"|"thousands"|null
+//
+// Multipliers convert the RAW value into ₹ Cr.
+const UNIT_TO_CR = {
+  crores:    1,         // already in Cr
+  lakhs:     0.01,      // 100 Lakhs = 1 Cr
+  millions:  0.1,       // 10 Mn = 1 Cr
+  billions:  100,       // 1 Bn = 100 Cr
+  thousands: 0.0001,    // very rare but supported
+};
+
+// Field names that are NOT monetary — never scale these.
+// Per-share ₹ values, ratios, counts, and operational unit measurements (MT, MW, MU, sqft, units, etc.)
+// are unit-agnostic and stay as-is. Anything ending in _percent / _pct / _ratio / _bps / _days
+// is also skipped via the suffix rules in isNonMonetaryFieldName().
+const NON_MONETARY_EXACT = new Set([
+  'eps_basic','eps_diluted','face_value','book_value_per_share','dividend_per_share_rs',
+  'debt_to_equity','asset_turnover','solvency_ratio','interest_coverage_ratio',
+  'number_of_shareholders','number_of_offices','number_of_individual_agents','number_of_policies_issued',
+  'units','volume','realisation_per_unit','realisation_per_tonne','grm_usd_per_bbl',
+  'production_mt','sales_mt','generation_mu','installed_capacity_mw',
+  'ask','rpk','passengers_flown','fleet_size','keys_operational','new_keys_added',
+  'arr','revpar',
+  'store_count_opening','store_count_closing','new_stores_added','stores_closed',
+  'bookings_volume_sqft','new_launches_sqft','sales_volume_sqft',
+]);
+
+function isNonMonetaryFieldName(key) {
+  if (!key) return false;
+  if (NON_MONETARY_EXACT.has(key)) return true;
+  // Suffix-based: anything ending in _percent / _pct / _ratio / _bps / _days / _date / _id / _mt / _mw / _bbl / _mu / _ape_pct / _yoy is non-monetary or already in its own unit.
+  if (/_percent$|_pct$|_ratio$|_bps$|_days$|_date$|_id$|_mt$|_mw$|_mu$|_pp$|_yoy$|_qoq$/i.test(key)) return true;
+  return false;
+}
+
+function scaleNumberDeep(val, mult, parentKey) {
+  if (val == null) return val;
+  if (Array.isArray(val)) return val.map(v => scaleNumberDeep(v, mult, parentKey));
+  if (typeof val === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(val)) {
+      // Skip non-monetary fields entirely.
+      if (isNonMonetaryFieldName(k)) { out[k] = v; continue; }
+      // Some object-keys hold structured non-monetary data — descend without scaling.
+      if (k === 'evidence' || k.startsWith('_')) { out[k] = v; continue; }
+      out[k] = scaleNumberDeep(v, mult, k);
+    }
+    return out;
+  }
+  if (typeof val === 'number') {
+    if (parentKey && isNonMonetaryFieldName(parentKey)) return val;
+    return Math.round(val * mult * 100) / 100;
+  }
+  return val; // strings, booleans — leave as-is
+}
+
+// Maps from `_unit_declaration` keys → list of paths in `smart_subcategory_specific` whose monetary numbers should be scaled.
+// Each path is an array of { key, isArray? }. Arrays mean: scale every element in the array.
+const UNIT_BLOCK_TARGETS = {
+  pnl:               [{ key: 'pnl_by_period', isArray: true }],
+  balance_sheet:     [{ key: 'balance_sheet_by_period', isArray: true }],
+  cash_flow:         [{ key: 'cash_flow_by_period', isArray: true }],
+  segment_results:   [{ key: 'segment_results', isArray: true }],
+  revenue_mix:       [{ key: 'revenue_mix_by_period', isArray: true }],
+  banking_specific:  [{ path: ['banking_nbfc_specific', 'bank_specific', 'entries'], isArray: true }],
+  nbfc_hfc_specific: [{ path: ['banking_nbfc_specific', 'nbfc_hfc_specific', 'entries'], isArray: true }],
+  insurance_life:    [{ path: ['insurance_specific', 'life_specific', 'entries'], isArray: true }],
+  insurance_general: [{ path: ['insurance_specific', 'general_specific', 'entries'], isArray: true }],
+  operational_metrics: [{ key: 'operational_metrics' }],
+  dividend_embedded:   [{ key: 'dividend_embedded' }],
+  other_insights:      [{ key: 'other_insights' }],
+};
+
+// Apply conversions in place on `spec` (the smart_subcategory_specific object).
+// Returns a `_unit_detection` summary that's safe to surface in the response.
+function applyUnitDeclarationConversion(spec) {
+  if (!spec || typeof spec !== 'object') return { applied: false, reason: 'no spec' };
+  const decl = spec._unit_declaration || {};
+  const detection = { applied: true, declaration: {}, conversions: [] };
+
+  for (const [blockKey, targets] of Object.entries(UNIT_BLOCK_TARGETS)) {
+    const declaredUnit = (decl[blockKey] || '').toLowerCase();
+    if (!declaredUnit || declaredUnit === 'crores') {
+      detection.declaration[blockKey] = declaredUnit || null;
+      continue; // null or already-Cr → no scaling needed
+    }
+    const mult = UNIT_TO_CR[declaredUnit];
+    if (mult == null) {
+      detection.declaration[blockKey] = `${declaredUnit} (UNKNOWN — left unscaled)`;
+      continue;
+    }
+    detection.declaration[blockKey] = declaredUnit;
+
+    for (const t of targets) {
+      // Resolve the target object/array.
+      const path = t.path || [t.key];
+      let parent = spec;
+      for (let i = 0; i < path.length - 1; i++) {
+        if (!parent || typeof parent !== 'object') { parent = null; break; }
+        parent = parent[path[i]];
+      }
+      if (!parent || typeof parent !== 'object') continue;
+      const lastKey = path[path.length - 1];
+      const node = parent[lastKey];
+      if (node == null) continue;
+
+      if (Array.isArray(node)) {
+        parent[lastKey] = node.map(entry => scaleNumberDeep(entry, mult, null));
+        detection.conversions.push({ block: blockKey, unit: declaredUnit, mult, target: path.join('.'), entries: node.length });
+      } else if (typeof node === 'object') {
+        parent[lastKey] = scaleNumberDeep(node, mult, null);
+        detection.conversions.push({ block: blockKey, unit: declaredUnit, mult, target: path.join('.') });
+      }
+    }
+  }
+  return detection;
+}
 
 // Map smart_subcategory -> step2 prompt file slug. Only Financial Updates is wired up for now.
 const STEP2_PROMPT_FILES = {
@@ -285,11 +426,148 @@ async function callGroq(requestId, cfg, contents, systemPromptText, opts = {}) {
   return { parsed, usageMeta };
 }
 
-// Provider dispatch — Gemini or Groq, same shape.
-async function callProvider(requestId, cfg, contents, systemPromptText, opts = {}) {
-  if (cfg.provider === 'groq') {
-    return callGroq(requestId, cfg, contents, systemPromptText, opts);
+// ── OpenAI call (chat.completions) ────────────────────────────────
+// Supports text mode (always) and base64 PDF mode (on gpt-4o, gpt-4o-mini, gpt-4.1 family).
+// Files API mode is not supported — falls back to text.
+async function callOpenAI(requestId, cfg, contents, systemPromptText, opts = {}) {
+  const { stepTag = null, emitDone = true } = opts;
+  const apiKey = cfg.openaiApiKey || process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    sendEvent(requestId, 'fail', { message: 'No OpenAI API key provided. Paste it in the sidebar.', step: stepTag });
+    return null;
   }
+  const modelId = cfg.openaiModel || 'gpt-4o-mini';
+
+  // Detect whether the contents include a base64 PDF (inlineData with mimeType application/pdf).
+  let inlinePdf = null;
+  let userText = '';
+  for (const msg of contents || []) {
+    for (const p of (msg.parts || [])) {
+      if (p.text) userText += (userText ? '\n\n' : '') + p.text;
+      if (p.inlineData && p.inlineData.mimeType === 'application/pdf' && p.inlineData.data) {
+        inlinePdf = p.inlineData.data;
+      }
+      // fileData (Gemini Files API URI) — OpenAI cannot read this. Fall through to text only.
+    }
+  }
+
+  if (!inlinePdf && (!userText || userText.length < 20)) {
+    sendEvent(requestId, 'fail', {
+      message: 'OpenAI received no extractable content. Use Text mode (extracted PDF text) or Base64 mode (raw PDF inline). Files API mode is Gemini-only.',
+      step: stepTag,
+    });
+    return null;
+  }
+
+  // Build OpenAI message content. For base64 PDFs use the multi-part `content` array.
+  const userContent = inlinePdf
+    ? [
+        { type: 'text', text: userText || 'Extract structured data from this filing.' },
+        { type: 'file', file: { filename: 'filing.pdf', file_data: `data:application/pdf;base64,${inlinePdf}` } },
+      ]
+    : userText;
+
+  sendEvent(requestId, 'cache', { hit: false, step: stepTag });
+
+  // Reasoning models (o1/o3/o4/gpt-5 family) don't support temperature or `max_tokens`.
+  const isReasoning = /^(o1|o3|o4|gpt-5)/i.test(modelId);
+  const body = {
+    model: modelId,
+    messages: [
+      { role: 'system', content: systemPromptText },
+      { role: 'user',   content: userContent },
+    ],
+    response_format: { type: 'json_object' },
+  };
+  if (isReasoning) {
+    body.max_completion_tokens = cfg.maxTokens || 32768;
+  } else {
+    body.max_tokens  = cfg.maxTokens || 32768;
+    body.temperature = cfg.temperature != null ? cfg.temperature : 0;
+  }
+
+  const headers = {
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  };
+  if (cfg.openaiOrg)     headers['OpenAI-Organization'] = cfg.openaiOrg;
+  if (cfg.openaiProject) headers['OpenAI-Project']      = cfg.openaiProject;
+
+  const MAX_RETRIES = 4;
+  const RETRYABLE = [429, 500, 502, 503, 504];
+  let fullResponse = '';
+  let usageMeta = null;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    fullResponse = '';
+    const t0 = Date.now();
+    sendEvent(requestId, 'attempt', { attempt, total: MAX_RETRIES, step: stepTag });
+
+    try {
+      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`HTTP ${resp.status} — ${errText.slice(0, 300)}`);
+      }
+      const json = await resp.json();
+      fullResponse = json.choices?.[0]?.message?.content || '';
+      if (json.usage) {
+        usageMeta = {
+          promptTokenCount: json.usage.prompt_tokens,
+          candidatesTokenCount: json.usage.completion_tokens,
+          totalTokenCount: json.usage.total_tokens,
+        };
+      }
+      sendEvent(requestId, 'chunk', { partial: fullResponse.slice(-300), step: stepTag });
+      sendEvent(requestId, 'attempt_done', { attempt, ms: Date.now() - t0, success: true, step: stepTag });
+      break;
+    } catch (err) {
+      const ms = Date.now() - t0;
+      const isRetryable = RETRYABLE.some(c => String(err.message).includes(String(c)));
+      sendEvent(requestId, 'attempt_done', { attempt, ms, success: false, error: err.message, step: stepTag });
+      if (isRetryable && attempt < MAX_RETRIES) {
+        const wait = attempt * 8;
+        sendEvent(requestId, 'retry', { attempt, nextAttempt: attempt + 1, total: MAX_RETRIES, waitSecs: wait, step: stepTag });
+        await new Promise(r => setTimeout(r, wait * 1000));
+        continue;
+      }
+      sendEvent(requestId, 'fail', { message: `OpenAI API failed after ${attempt} attempt(s): ${err.message}`, step: stepTag });
+      return null;
+    }
+  }
+
+  if (usageMeta) {
+    sendEvent(requestId, 'tokens', {
+      input: usageMeta.promptTokenCount || 0,
+      output: usageMeta.candidatesTokenCount || 0,
+      total: usageMeta.totalTokenCount || 0,
+      step: stepTag,
+    });
+  }
+
+  sendEvent(requestId, 'stage', { stage: 'parsing', message: 'Parsing JSON response...', step: stepTag });
+
+  let parsed;
+  try {
+    const raw = JSON.parse(fullResponse);
+    parsed = Array.isArray(raw) ? raw[0] : raw;
+  } catch {
+    sendEvent(requestId, 'fail', { message: 'OpenAI response was not valid JSON.', step: stepTag });
+    return null;
+  }
+
+  if (emitDone) sendEvent(requestId, 'done', { result: parsed });
+  return { parsed, usageMeta };
+}
+
+// Provider dispatch — Gemini, Groq, or OpenAI.
+async function callProvider(requestId, cfg, contents, systemPromptText, opts = {}) {
+  if (cfg.provider === 'groq')   return callGroq(requestId, cfg, contents, systemPromptText, opts);
+  if (cfg.provider === 'openai') return callOpenAI(requestId, cfg, contents, systemPromptText, opts);
   return callGemini(requestId, cfg, contents, systemPromptText, opts);
 }
 
@@ -422,7 +700,7 @@ async function prepareContents(filePath, filename, uploadMode, requestId, apiKey
       return null;
     }
     sendEvent(requestId, 'stage', { stage: 'extracted', message: `Encoded ${sizeKb} KB — sending inline` });
-    sendEvent(requestId, 'extracted_text', { text: `[PDF sent as base64 inline — ${sizeKb} KB]\nGemini reads the raw PDF layout directly, including tables and formatting.`, mode: 'base64' });
+    sendEvent(requestId, 'extracted_text', { text: `[PDF sent as base64 inline — ${sizeKb} KB]\nThe model reads the raw PDF layout directly, including tables and formatting.`, mode: 'base64' });
     return [{
       role: 'user',
       parts: [
@@ -462,12 +740,14 @@ async function prepareContents(filePath, filename, uploadMode, requestId, apiKey
 // ── Single mode — one call with the existing ~7.8k-token prompt ───
 async function runMode_single(filePath, filename, uploadMode, requestId, cfg) {
   const apiKey = cfg.apiKey || process.env.GEMINI_API_KEY;
-  // Groq is text-only — force text mode.
-  const effectiveUploadMode = cfg.provider === 'groq' ? 'text' : uploadMode;
+  // Groq is text-only. OpenAI supports text + base64 (no Files API). Force compatible modes.
+  let effectiveUploadMode = uploadMode;
+  if (cfg.provider === 'groq') effectiveUploadMode = 'text';
+  if (cfg.provider === 'openai' && uploadMode === 'filesapi') effectiveUploadMode = 'base64';
   const contents = await prepareContents(filePath, filename, effectiveUploadMode, requestId, apiKey);
   if (!contents) return;
 
-  const providerLabel = cfg.provider === 'groq' ? 'Groq' : 'Gemini';
+  const providerLabel = cfg.provider === 'groq' ? 'Groq' : cfg.provider === 'openai' ? 'OpenAI' : 'Gemini';
   sendEvent(requestId, 'stage', { stage: 'calling_api', message: `Sending to ${providerLabel}...` });
 
   const systemText = cfg.systemPromptOverride
@@ -483,8 +763,10 @@ async function runMode_single(filePath, filename, uploadMode, requestId, cfg) {
 // ── Double mode — Step 1 classifier → Step 2 category extractor ───
 async function runMode_double(filePath, filename, uploadMode, requestId, cfg) {
   const apiKey = cfg.apiKey || process.env.GEMINI_API_KEY;
-  // Groq is text-only — force text mode.
-  const effectiveUploadMode = cfg.provider === 'groq' ? 'text' : uploadMode;
+  // Groq is text-only. OpenAI supports text + base64 (no Files API). Force compatible modes.
+  let effectiveUploadMode = uploadMode;
+  if (cfg.provider === 'groq') effectiveUploadMode = 'text';
+  if (cfg.provider === 'openai' && uploadMode === 'filesapi') effectiveUploadMode = 'base64';
   const contents = await prepareContents(filePath, filename, effectiveUploadMode, requestId, apiKey);
   if (!contents) return;
 
@@ -552,11 +834,17 @@ async function runMode_double(filePath, filename, uploadMode, requestId, cfg) {
   });
   if (!s2) return;
 
+  let unitDetectionDouble = null;
+  if (s2.parsed?.smart_subcategory_specific && classification.smart_subcategory === 'Financial Updates') {
+    unitDetectionDouble = applyUnitDeclarationConversion(s2.parsed.smart_subcategory_specific);
+  }
+
   const merged = {
     smart_subcategory: classification.smart_subcategory,
     _classifier_confidence: classification.confidence,
     _classifier_rationale: classification.rationale,
     _secondary_events: classification.secondary_events || [],
+    _unit_detection: unitDetectionDouble,
     ...s2.parsed,
   };
 
@@ -565,6 +853,173 @@ async function runMode_double(filePath, filename, uploadMode, requestId, cfg) {
 
   sendEvent(requestId, 'done', { result: merged });
 }
+
+// ── /new pipeline — text-mode classify on first 5 pages → base64 extract ──
+// Provider chosen by user (Gemini or OpenAI). No other toggles.
+async function runMode_simplified(filePath, filename, requestId, cfg) {
+
+  // ── Step 1: classify using only the first 5 pages of text ──
+  sendEvent(requestId, 'step', { step: 'step1', label: 'Classifying filing (first 5 pages, text mode)' });
+  sendEvent(requestId, 'stage', { stage: 'extracting', message: 'Extracting first 5 pages as text...', step: 'step1' });
+
+  let firstPagesText, totalPages, pagesUsed;
+  try {
+    const result = await extractFirstNPagesOfPDF(filePath, 5);
+    firstPagesText = result.text;
+    totalPages = result.totalPages;
+    pagesUsed = result.pagesUsed;
+  } catch (err) {
+    sendEvent(requestId, 'fail', { message: `Step 1 text extraction failed: ${err.message}`, step: 'step1' });
+    return;
+  }
+
+  if (!firstPagesText || firstPagesText.trim().length < 200) {
+    sendEvent(requestId, 'fail', {
+      message: `Step 1 found only ${firstPagesText?.trim().length || 0} chars in the first ${pagesUsed} pages — likely a scanned/image PDF. The /new pipeline requires a text-layer cover page.`,
+      step: 'step1',
+    });
+    return;
+  }
+
+  sendEvent(requestId, 'stage', {
+    stage: 'extracted',
+    message: `Pulled ${firstPagesText.length.toLocaleString()} chars from ${pagesUsed} of ${totalPages} pages`,
+    step: 'step1',
+  });
+  sendEvent(requestId, 'extracted_text', { text: firstPagesText, mode: 'text', step: 'step1' });
+
+  const step1Contents = [{ role: 'user', parts: [{ text: `filing_text:\n${firstPagesText}` }] }];
+
+  const step1Default = loadPrompt('step1_classifier');
+  if (!step1Default && !cfg.step1PromptOverride) {
+    sendEvent(requestId, 'fail', { message: 'Step 1 classifier prompt not found on server.' });
+    return;
+  }
+  const step1Text = cfg.step1PromptOverride || step1Default;
+
+  sendEvent(requestId, 'stage', { stage: 'calling_api', message: 'Step 1: classifying...', step: 'step1' });
+  const s1 = await callProvider(requestId, cfg, step1Contents, step1Text, {
+    stepTag: 'step1',
+    cacheTag: cfg.step1PromptOverride ? null : 'step1',
+    emitDone: false,
+  });
+  if (!s1) return;
+  const classification = s1.parsed;
+  sendEvent(requestId, 'classification', classification);
+
+  if (!STEP2_PROMPT_FILES[classification.smart_subcategory]) {
+    sendEvent(requestId, 'fail', {
+      message: `Filing classified as "${classification.smart_subcategory}" (confidence ${classification.confidence}) — Step 2 extractor not yet built. Currently built: ${Object.keys(STEP2_PROMPT_FILES).map(s => `"${s}"`).join(', ')}.`,
+      classification,
+    });
+    return;
+  }
+
+  // ── Step 2: extract structured data using base64 of full PDF ──
+  sendEvent(requestId, 'step', { step: 'step2', label: `Extracting ${classification.smart_subcategory} (base64, full PDF)` });
+  sendEvent(requestId, 'stage', { stage: 'extracting', message: 'Encoding PDF as base64...', step: 'step2' });
+
+  let base64, sizeKb;
+  try {
+    const buffer = fs.readFileSync(filePath);
+    base64 = buffer.toString('base64');
+    sizeKb = (buffer.length / 1024).toFixed(1);
+  } catch (err) {
+    sendEvent(requestId, 'fail', { message: `Failed to read PDF for Step 2: ${err.message}`, step: 'step2' });
+    return;
+  }
+  sendEvent(requestId, 'stage', { stage: 'extracted', message: `Encoded ${sizeKb} KB`, step: 'step2' });
+
+  const step2Contents = [{
+    role: 'user',
+    parts: [
+      { inlineData: { mimeType: 'application/pdf', data: base64 } },
+      { text: 'Extract structured data from this filing.' },
+    ],
+  }];
+
+  const step2Slug = STEP2_PROMPT_FILES[classification.smart_subcategory];
+  const step2Default = loadPrompt(step2Slug);
+  const userOverride = cfg.step2PromptOverrides?.[classification.smart_subcategory];
+  if (!step2Default && !userOverride) {
+    sendEvent(requestId, 'fail', { message: `Step 2 prompt for "${classification.smart_subcategory}" not found on server.`, step: 'step2' });
+    return;
+  }
+  const step2Text = userOverride || step2Default;
+
+  sendEvent(requestId, 'stage', { stage: 'calling_api', message: `Step 2: extracting ${classification.smart_subcategory}...`, step: 'step2' });
+  const s2 = await callProvider(requestId, cfg, step2Contents, step2Text, {
+    stepTag: 'step2',
+    cacheTag: userOverride ? null : `step2_${step2Slug}`,
+    emitDone: false,
+  });
+  if (!s2) return;
+
+  // Apply server-side unit conversion based on the LLM's _unit_declaration block.
+  // Only Financial Updates emits this block today; for other categories applyUnit... is a no-op.
+  let unitDetection = null;
+  if (s2.parsed?.smart_subcategory_specific && classification.smart_subcategory === 'Financial Updates') {
+    unitDetection = applyUnitDeclarationConversion(s2.parsed.smart_subcategory_specific);
+  }
+
+  const merged = {
+    smart_subcategory: classification.smart_subcategory,
+    _classifier_confidence: classification.confidence,
+    _classifier_rationale: classification.rationale,
+    _secondary_events: classification.secondary_events || [],
+    _pipeline: 'simplified',
+    _step1_pages_used: pagesUsed,
+    _step1_total_pages: totalPages,
+    _unit_detection: unitDetection,
+    ...s2.parsed,
+  };
+
+  setJobMemory(requestId, { contents: step2Contents, cfg });
+  sendEvent(requestId, 'done', { result: merged });
+}
+
+// ── POST /process-simplified ─ /new page entry point ─
+// Step 1 = text + first 5 pages, Step 2 = base64 + full PDF. Provider is gemini or openai (user pick).
+app.post('/process-simplified', upload.single('file'), async (req, res) => {
+  const requestId = Date.now().toString() + Math.random().toString(36).slice(2);
+  let cfg = {};
+  try { cfg = JSON.parse(req.body.config || '{}'); } catch {}
+
+  const provider = cfg.provider === 'openai' ? 'openai' : 'gemini';
+  cfg.provider = provider;
+
+  if (provider === 'gemini') {
+    if (!cfg.apiKey) cfg.apiKey = process.env.GEMINI_API_KEY;
+    if (!cfg.apiKey) return res.status(400).json({ error: 'No Gemini API key provided.' });
+  } else {
+    if (!cfg.openaiApiKey) cfg.openaiApiKey = process.env.OPENAI_API_KEY;
+    if (!cfg.openaiApiKey) return res.status(400).json({ error: 'No OpenAI API key provided.' });
+  }
+
+  let filePath = req.file?.path;
+  const filename = req.file?.originalname || 'document.pdf';
+  const url = req.body.url;
+  if (!filePath && !url) return res.status(400).json({ error: 'No file or URL provided.' });
+
+  clients.set(requestId, { res: null, buffer: [] });
+  res.json({ requestId });
+
+  (async () => {
+    if (url) {
+      sendEvent(requestId, 'stage', { stage: 'downloading', message: 'Downloading PDF from URL...' });
+      filePath = path.join(__dirname, 'uploads', `${requestId}.pdf`);
+      try {
+        await downloadFile(url, filePath);
+        sendEvent(requestId, 'stage', { stage: 'downloading', message: 'Download complete' });
+      } catch (err) {
+        sendEvent(requestId, 'fail', { message: `Download failed: ${err.message}` });
+        return;
+      }
+    }
+    await runMode_simplified(filePath, filename, requestId, cfg);
+    fs.unlink(filePath, () => {});
+  })();
+});
 
 // ── POST /retry ─ Targeted re-fetch of a specific missing block ──
 // Body: { requestId, target: 'balance_sheet' | 'cash_flow', scope: 'standalone' | 'consolidated', periodLabel? }
@@ -718,12 +1173,16 @@ app.post('/process', upload.single('file'), async (req, res) => {
   const requestId = Date.now().toString() + Math.random().toString(36).slice(2);
   let cfg = {};
   try { cfg = JSON.parse(req.body.config || '{}'); } catch {}
-  if (!cfg.apiKey)     cfg.apiKey     = process.env.GEMINI_API_KEY;
-  if (!cfg.groqApiKey) cfg.groqApiKey = process.env.GROQ_API_KEY;
+  if (!cfg.apiKey)       cfg.apiKey       = process.env.GEMINI_API_KEY;
+  if (!cfg.groqApiKey)   cfg.groqApiKey   = process.env.GROQ_API_KEY;
+  if (!cfg.openaiApiKey) cfg.openaiApiKey = process.env.OPENAI_API_KEY;
+  if (!cfg.openaiOrg)    cfg.openaiOrg    = process.env.OPENAI_ORG_ID || '';
+  if (!cfg.openaiProject) cfg.openaiProject = process.env.OPENAI_PROJECT || '';
 
   const provider = cfg.provider || 'gemini';
-  if (provider === 'groq' && !cfg.groqApiKey) return res.status(400).json({ error: 'No Groq API key provided.' });
-  if (provider === 'gemini' && !cfg.apiKey)   return res.status(400).json({ error: 'No Gemini API key provided.' });
+  if (provider === 'groq' && !cfg.groqApiKey)     return res.status(400).json({ error: 'No Groq API key provided.' });
+  if (provider === 'openai' && !cfg.openaiApiKey) return res.status(400).json({ error: 'No OpenAI API key provided.' });
+  if (provider === 'gemini' && !cfg.apiKey)       return res.status(400).json({ error: 'No Gemini API key provided.' });
 
   let filePath = req.file?.path;
   const filename = req.file?.originalname || 'document.pdf';
