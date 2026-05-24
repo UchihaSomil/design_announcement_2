@@ -22,6 +22,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 // /new — simplified pipeline page (text-mode classify on first 5 pages → base64 extract).
 app.get('/new', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'new.html')));
 
+// /final — focused pipeline. Step 1 enriched (classify + headline + summary + key_facts) for ALL 24.
+// Step 2 only for Financial Updates and Order Win. Uses isolated prompts in system_prompts_final/.
+app.get('/final', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'final.html')));
+
 // ── SSE ──────────────────────────────────────────────────────────
 const clients = new Map();
 
@@ -115,6 +119,19 @@ function loadPrompt(name) {
   try { return fs.readFileSync(path.join(__dirname, 'system_prompts', `${safe}.md`), 'utf8'); }
   catch { return null; }
 }
+
+// /final has its own isolated prompt set in system_prompts_final/ — independent of /new and /.
+function loadPromptFinal(name) {
+  const safe = name.replace(/[^a-z0-9_]/gi, '');
+  try { return fs.readFileSync(path.join(__dirname, 'system_prompts_final', `${safe}.md`), 'utf8'); }
+  catch { return null; }
+}
+
+// Map for /final: only Financial Updates and Order Win get Step 2.
+const FINAL_STEP2_PROMPT_FILES = {
+  'Financial Updates': 'step2_financial_updates',
+  'Order Win':         'step2_order_win',
+};
 
 // Serve default prompt files so the UI modal can display them.
 app.get('/prompts/:name', (req, res) => {
@@ -977,6 +994,208 @@ async function runMode_simplified(filePath, filename, requestId, cfg) {
   setJobMemory(requestId, { contents: step2Contents, cfg });
   sendEvent(requestId, 'done', { result: merged });
 }
+
+// ── /final pipeline — enriched Step 1 for all 24, Step 2 only for Financial Updates + Order Win ──
+async function runMode_final(filePath, filename, requestId, cfg) {
+  // ── Step 1: enriched classifier on first 5 pages of text ──
+  sendEvent(requestId, 'step', { step: 'step1', label: 'Classifying + summarising (first 5 pages, text)' });
+  sendEvent(requestId, 'stage', { stage: 'extracting', message: 'Extracting first 5 pages as text...', step: 'step1' });
+
+  let firstPagesText, totalPages, pagesUsed;
+  try {
+    const r = await extractFirstNPagesOfPDF(filePath, 5);
+    firstPagesText = r.text; totalPages = r.totalPages; pagesUsed = r.pagesUsed;
+  } catch (err) {
+    sendEvent(requestId, 'fail', { message: `Step 1 text extraction failed: ${err.message}`, step: 'step1' });
+    return;
+  }
+  if (!firstPagesText || firstPagesText.trim().length < 200) {
+    sendEvent(requestId, 'fail', {
+      message: `Step 1 found only ${firstPagesText?.trim().length || 0} chars in the first ${pagesUsed} pages — likely a scanned/image PDF.`,
+      step: 'step1',
+    });
+    return;
+  }
+  sendEvent(requestId, 'stage', {
+    stage: 'extracted',
+    message: `Pulled ${firstPagesText.length.toLocaleString()} chars from ${pagesUsed} of ${totalPages} pages`,
+    step: 'step1',
+  });
+  sendEvent(requestId, 'extracted_text', { text: firstPagesText, mode: 'text', step: 'step1' });
+
+  const step1Contents = [{ role: 'user', parts: [{ text: `filing_text:\n${firstPagesText}` }] }];
+
+  const step1Text = loadPromptFinal('step1_classifier_enriched');
+  if (!step1Text) {
+    sendEvent(requestId, 'fail', { message: 'Step 1 enriched prompt not found in system_prompts_final/.' });
+    return;
+  }
+
+  sendEvent(requestId, 'stage', { stage: 'calling_api', message: 'Step 1: classify + headline + summary + key_facts...', step: 'step1' });
+  const s1 = await callProvider(requestId, cfg, step1Contents, step1Text, {
+    stepTag: 'step1',
+    cacheTag: 'final_step1',
+    emitDone: false,
+  });
+  if (!s1) return;
+  const classification = s1.parsed;
+  sendEvent(requestId, 'classification', classification);
+
+  // For 22 of 24 categories, Step 1 is the final output.
+  const step2Slug = FINAL_STEP2_PROMPT_FILES[classification.smart_subcategory];
+  if (!step2Slug) {
+    // Step 1 output IS the final result.
+    const merged = {
+      smart_subcategory: classification.smart_subcategory,
+      _classifier_confidence: classification.confidence,
+      _classifier_rationale: classification.rationale,
+      _secondary_events: classification.secondary_events || [],
+      _pipeline: 'final',
+      _step2_skipped: true,
+      _step2_skipped_reason: `No Step 2 extractor for "${classification.smart_subcategory}" — Step 1 output is final.`,
+      _step1_pages_used: pagesUsed,
+      _step1_total_pages: totalPages,
+      headline: classification.headline,
+      summary: classification.summary,
+      key_facts: classification.key_facts || {},
+    };
+    sendEvent(requestId, 'done', { result: merged });
+    return;
+  }
+
+  // ── Step 2: full PDF base64, only for Financial Updates / Order Win ──
+  sendEvent(requestId, 'step', { step: 'step2', label: `Extracting ${classification.smart_subcategory} (base64, full PDF)` });
+  sendEvent(requestId, 'stage', { stage: 'extracting', message: 'Encoding PDF as base64...', step: 'step2' });
+
+  let base64, sizeKb;
+  try {
+    const buffer = fs.readFileSync(filePath);
+    base64 = buffer.toString('base64');
+    sizeKb = (buffer.length / 1024).toFixed(1);
+  } catch (err) {
+    sendEvent(requestId, 'fail', { message: `Failed to read PDF for Step 2: ${err.message}`, step: 'step2' });
+    return;
+  }
+  sendEvent(requestId, 'stage', { stage: 'extracted', message: `Encoded ${sizeKb} KB`, step: 'step2' });
+
+  const step2Contents = [{
+    role: 'user',
+    parts: [
+      { inlineData: { mimeType: 'application/pdf', data: base64 } },
+      { text: 'Extract structured data from this filing.' },
+    ],
+  }];
+
+  const step2Text = loadPromptFinal(step2Slug);
+  if (!step2Text) {
+    sendEvent(requestId, 'fail', { message: `Step 2 prompt "${step2Slug}" not found in system_prompts_final/.`, step: 'step2' });
+    return;
+  }
+
+  sendEvent(requestId, 'stage', { stage: 'calling_api', message: `Step 2: extracting ${classification.smart_subcategory}...`, step: 'step2' });
+  const s2 = await callProvider(requestId, cfg, step2Contents, step2Text, {
+    stepTag: 'step2',
+    cacheTag: `final_step2_${step2Slug}`,
+    emitDone: false,
+  });
+  if (!s2) return;
+
+  // Server-side unit conversion (Financial Updates only — Order Win has its own simpler unit handling below).
+  let unitDetection = null;
+  if (s2.parsed?.smart_subcategory_specific) {
+    if (classification.smart_subcategory === 'Financial Updates') {
+      unitDetection = applyUnitDeclarationConversion(s2.parsed.smart_subcategory_specific);
+    } else if (classification.smart_subcategory === 'Order Win') {
+      unitDetection = applyOrderWinUnitConversion(s2.parsed.smart_subcategory_specific);
+    }
+  }
+
+  const merged = {
+    smart_subcategory: classification.smart_subcategory,
+    _classifier_confidence: classification.confidence,
+    _classifier_rationale: classification.rationale,
+    _secondary_events: classification.secondary_events || [],
+    _pipeline: 'final',
+    _step2_skipped: false,
+    _step1_pages_used: pagesUsed,
+    _step1_total_pages: totalPages,
+    _unit_detection: unitDetection,
+    // Prefer Step 2's headline/summary/sentiment when present (they're sharper for #1 / #9).
+    headline: s2.parsed?.headline || classification.headline,
+    summary:  s2.parsed?.summary  || classification.summary,
+    sentiment: s2.parsed?.sentiment,
+    key_facts: classification.key_facts || {},
+    ...s2.parsed,
+  };
+
+  setJobMemory(requestId, { contents: step2Contents, cfg });
+  sendEvent(requestId, 'done', { result: merged });
+}
+
+// Order Win unit conversion — simpler than Financial Updates. Just one declared unit on the order_value field.
+function applyOrderWinUnitConversion(spec) {
+  if (!spec || typeof spec !== 'object') return { applied: false };
+  const decl = spec._unit_declaration || {};
+  const unit = (decl.order_value_unit || '').toLowerCase();
+  const detection = { applied: true, declaration: { order_value: unit || null }, conversions: [] };
+
+  // Currency-to-Cr is left for the LLM to handle (it has the FX context). Only scale magnitude units.
+  const mult = UNIT_TO_CR[unit];
+  if (mult == null) return detection;
+
+  if (spec.order && typeof spec.order.order_value_cr === 'number') {
+    spec.order.order_value_cr = Math.round(spec.order.order_value_cr * mult * 100) / 100;
+    detection.conversions.push({ block: 'order', unit, mult, target: 'order.order_value_cr' });
+  }
+  if (Array.isArray(spec.context?.secondary_orders_in_filing)) {
+    spec.context.secondary_orders_in_filing.forEach(o => {
+      if (typeof o.value_cr === 'number') o.value_cr = Math.round(o.value_cr * mult * 100) / 100;
+    });
+  }
+  return detection;
+}
+
+// ── POST /process-final — entry point for /final page ──
+app.post('/process-final', upload.single('file'), async (req, res) => {
+  const requestId = Date.now().toString() + Math.random().toString(36).slice(2);
+  let cfg = {};
+  try { cfg = JSON.parse(req.body.config || '{}'); } catch {}
+
+  const provider = cfg.provider === 'openai' ? 'openai' : 'gemini';
+  cfg.provider = provider;
+
+  if (provider === 'gemini') {
+    if (!cfg.apiKey) cfg.apiKey = process.env.GEMINI_API_KEY;
+    if (!cfg.apiKey) return res.status(400).json({ error: 'No Gemini API key provided.' });
+  } else {
+    if (!cfg.openaiApiKey) cfg.openaiApiKey = process.env.OPENAI_API_KEY;
+    if (!cfg.openaiApiKey) return res.status(400).json({ error: 'No OpenAI API key provided.' });
+  }
+
+  let filePath = req.file?.path;
+  const filename = req.file?.originalname || 'document.pdf';
+  const url = req.body.url;
+  if (!filePath && !url) return res.status(400).json({ error: 'No file or URL provided.' });
+
+  clients.set(requestId, { res: null, buffer: [] });
+  res.json({ requestId });
+
+  (async () => {
+    if (url) {
+      sendEvent(requestId, 'stage', { stage: 'downloading', message: 'Downloading PDF from URL...' });
+      filePath = path.join(__dirname, 'uploads', `${requestId}.pdf`);
+      try {
+        await downloadFile(url, filePath);
+        sendEvent(requestId, 'stage', { stage: 'downloading', message: 'Download complete' });
+      } catch (err) {
+        sendEvent(requestId, 'fail', { message: `Download failed: ${err.message}` });
+        return;
+      }
+    }
+    await runMode_final(filePath, filename, requestId, cfg);
+    fs.unlink(filePath, () => {});
+  })();
+});
 
 // ── POST /process-simplified ─ /new page entry point ─
 // Step 1 = text + first 5 pages, Step 2 = base64 + full PDF. Provider is gemini or openai (user pick).
