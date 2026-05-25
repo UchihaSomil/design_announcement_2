@@ -200,12 +200,99 @@ OUTPUT CONTRACT — single JSON object. No markdown, no code fences.
   "headline": "<≤120 chars, news-wire style, lead with the most material fact>",
   "summary": "<2–5 sentences — see per-category guidance below for what to lead with>",
 
+  "sentiment": {
+    "label": "positive" | "neutral" | "negative",
+    "score": <integer -100 to +100>,
+    "rationale": "<≤30 words — cite the specific driver that moved the score>"
+  },
+
   "key_facts": {
     // SHAPE depends on smart_subcategory. See SCHEMAS below. Use EXACTLY the keys listed for the matching category.
     // Omit keys that the filing does not disclose (don't emit nulls for every key — only emit what's there).
     // For Financial Updates (#1) and Order Win (#9): emit a thin key_facts (period_label, primary_event_summary) — Step 2 will fill the rest.
   }
 }
+
+═══════════════════════════════════════════════════════════════════
+SENTIMENT — UNIVERSAL RUBRIC ACROSS ALL 24 CATEGORIES
+═══════════════════════════════════════════════════════════════════
+Sentiment is the LIKELY SHORT-TERM SHAREHOLDER REACTION to this filing — would a reasonable equity investor see this as good news, neutral, or bad news on the day it's filed?
+
+Start from 0. Adjust based ONLY on facts the filing actually discloses. Output an integer −100 to +100 and a label.
+
+LABEL FROM SCORE
+  ≥ +20  →  "positive"
+  ≤ −20  →  "negative"
+  otherwise  →  "neutral"
+
+CORE RULE — categories that are inherently directional:
+  Always-positive starters (begin at +15 unless filing has counter-signals):
+    - Order Win, Capacity Expansion/Capex, Product Launch, Acquisition, Joint Venture, Regulatory Approval/Licensing
+  Always-negative starters (begin at −20):
+    - Fraud/Default, Insolvency/CIRP, Operational Disruption, Regulatory Action/Penalty
+  Mostly-neutral starters (begin at 0):
+    - Concall/Presentation, Routine/Administrative, Change in Key Management, Others
+
+CATEGORY-SPECIFIC ADJUSTMENTS
+
+#1 Financial Updates — anchor on YoY PAT and margin:
+  +20 PAT growth ≥ 20% YoY · +10 PAT 5–20% · 0 flat · −10 PAT decline ≤ −20% · −25 loss vs profit
+  +10 margin expansion ≥ 100 bps YoY · −10 margin compression ≥ 100 bps
+  +5 dividend raised vs last year, special dividend, or guidance raised
+  −15 auditor qualification or going-concern note
+  Operational updates (Rule 1b): +15 if volumes / SSSG / dispatches up double-digit YoY · −15 if down double-digit
+
+#2 Concall/Presentation — usually neutral. +10 if disclosed guidance is bullish; −10 if guidance cut.
+
+#3 Dividend — +10 if special or higher-than-prior-year; +5 if same as prior; 0 if record-date only intimation.
+
+#4 Buyback — +20 if size > 5% of market cap or at premium to CMP; +10 typical; −5 if size < 1% (token).
+
+#5 Bonus/Stock Split — +15 (usually well-received liquidity / signalling event).
+
+#6 Acquisition — +15 if strategic + reasonable price; −10 if filing flags large goodwill / leverage spike; −15 if cash-burning target with no clear synergy.
+
+#7 Merger/Demerger — +10 if value-unlocking demerger or accretive merger; 0 typical; −10 if dilutive swap ratio.
+
+#8 Joint Venture — +15 if marquee partner / new geography; +10 typical.
+
+#9 Order Win — +15 if order > 10% of trailing revenue or marquee customer; +10 typical; −5 if LoI only / value undisclosed; −10 if conditional / tentative.
+
+#10 Capacity Expansion — +15 if capex < 30% of net worth and clear payback; 0 if very large / leverages up; −10 if capex > 50% of net worth without funding clarity.
+
+#11 Product Launch — +10 typical; +15 if in growing category with clear pricing; 0 if minor variant.
+
+#12 Fund Raising — +10 if QIP at premium / debt at lower rate (refinance); 0 typical; −20 if equity raise at deep discount or distressed circumstances.
+
+#13 Stake Sale — +15 if value-realisation at premium; 0 typical; −10 if forced sale / distressed.
+
+#14 Credit Rating Change — +20 upgrade · −25 downgrade · 0 reaffirmation · −10 placed on negative watch · +10 placed on positive watch · −15 withdrawn (often a warning sign).
+
+#15 Regulatory Action/Penalty — −15 SCN · −25 final order with penalty · −35 suspension/debarment · −10 if penalty < 0.1% of revenue (immaterial).
+
+#16 Fraud/Default — −30 default disclosed · −40 confirmed fraud / siphoning · −25 forensic-audit findings.
+
+#17 Insolvency/CIRP — −40 NCLT admission · −50 liquidation order · +20 if filing is a SUCCESSFUL Section 12A withdrawal or resolution-plan approval at a reasonable haircut.
+
+#18 Open Offer — +10 if at premium to CMP and credible acquirer; 0 if at par; −10 if mandatory open offer following a hostile / unwanted change of control.
+
+#19 Promoter Buy/Sell — +15 promoter buy · −15 promoter sell · −20 fresh pledge · +10 pledge release · −5 inter-se transfer (neutral signalling).
+
+#20 Change in Key Management — 0 most cases · −20 unexpected CEO/CFO/Chairman resignation, especially with no successor named · +10 marquee external hire as CEO/CFO.
+
+#21 Operational Disruption — −10 contained, no casualties, insured · −25 ongoing or production loss > 1 week · −40 fatalities or large uninsured loss.
+
+#22 Others — score on the underlying event using common sense. Default to 0 if ambiguous.
+
+#23 Routine/Administrative — almost always 0. Only deviate if the routine filing reveals something material (e.g. a Reg 74 disclosure that shows large unclaimed shares — likely still 0).
+
+#24 Regulatory Approval/Licensing — +20 USFDA approval / new licence in growing market · +10 typical · +5 procedural extension of existing licence.
+
+RATIONALE: ≤30 words, cite the SPECIFIC driver. Examples:
+  ✓ "Order Win: ₹3,210 Cr LoA from NTPC, ~5% of FY26 revenue, repeat customer."
+  ✓ "Promoter sell: 1.2 Cr shares of Sumi Motherson; promoter holding drops to 31.4% from 33.1%."
+  ✓ "Auditor qualification on inventory + PAT decline 22% YoY → score capped at −15."
+  ✗ "Negative news for shareholders" (vague — not allowed)
 
 ═══════════════════════════════════════════════════════════════════
 HEADLINE & SUMMARY — UNIVERSAL RULES

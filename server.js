@@ -13,6 +13,23 @@ const require = createRequire(import.meta.url);
 const PDFParser = require('pdf2json');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Load .env if present — minimal parser, no dotenv dep needed.
+// .env is gitignored so the key never leaves the machine.
+try {
+  const envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    fs.readFileSync(envPath, 'utf8').split('\n').forEach(line => {
+      const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/i);
+      if (m && !process.env[m[1]]) {
+        process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+      }
+    });
+    console.log(`[env] Loaded .env from ${envPath}`);
+  }
+} catch (err) {
+  console.warn(`[env] Failed to load .env: ${err.message}`);
+}
 const app = express();
 const upload = multer({ dest: path.join(__dirname, 'uploads/') });
 
@@ -1057,6 +1074,7 @@ async function runMode_final(filePath, filename, requestId, cfg) {
       _step1_total_pages: totalPages,
       headline: classification.headline,
       summary: classification.summary,
+      sentiment: classification.sentiment,
       key_facts: classification.key_facts || {},
     };
     sendEvent(requestId, 'done', { result: merged });
@@ -1123,7 +1141,7 @@ async function runMode_final(filePath, filename, requestId, cfg) {
     // Prefer Step 2's headline/summary/sentiment when present (they're sharper for #1 / #9).
     headline: s2.parsed?.headline || classification.headline,
     summary:  s2.parsed?.summary  || classification.summary,
-    sentiment: s2.parsed?.sentiment,
+    sentiment: s2.parsed?.sentiment || classification.sentiment,
     key_facts: classification.key_facts || {},
     ...s2.parsed,
   };
